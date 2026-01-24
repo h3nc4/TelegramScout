@@ -1,0 +1,87 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices"
+  ],
+  "reviewers": [
+    "h3nc4"
+  ],
+  "assignAutomerge": true,
+  "prConcurrentLimit": 0,
+  "prHourlyLimit": 0,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "schedule": [
+      "before 4am"
+    ]
+  },
+  "packageRules": [
+    {
+      "groupName": "go-deps",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Group SonarQube server and scanner updates",
+      "groupName": "sonarqube",
+      "matchPackageNames": [
+        "sonarqube",
+        "sonarsource/sonar-scanner-cli"
+      ]
+    },
+    {
+      "description": "Disable unwanted pinning for SonarQube images",
+      "matchPackageNames": [
+        "sonarqube",
+        "sonarsource/sonar-scanner-cli"
+      ],
+      "pinDigests": false
+    },
+    {
+      "description": "Auto-merge all minor, patch, pin, and digest updates",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "automerge": true,
+      "platformAutomerge": true
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "Update Docker images in sonar script",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^scripts/sonar\\.sh$/"
+      ],
+      "matchStrings": [
+        "_image=\"(?<depName>.*?):(?<currentValue>.*?)\""
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Update Go version in CI/Dev Dockerfiles",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^dev\\.Dockerfile$/",
+        "/^Dockerfile$/"
+      ],
+      "matchStrings": [
+        "ARG GO_VERSION=\"(?<currentValue>.*?)\""
+      ],
+      "datasourceTemplate": "golang-version",
+      "depNameTemplate": "go"
+    }
+  ]
+}

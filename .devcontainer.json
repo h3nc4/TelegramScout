@@ -1,0 +1,59 @@
+{
+  "name": "telegram-scout",
+  "image": "h3nc4/telegram-scout-dev:0.0.0",
+  "runArgs": ["--name=telegram-scout-devcontainer", "--network=host"],
+  "remoteUser": "telegram-scout",
+  "workspaceFolder": "/workspaces/telegram-scout",
+  "overrideCommand": false,
+  "mounts": [
+    "source=${env:HOME},target=/home/telegram-scout,type=bind",
+    "source=/etc/localtime,target=/etc/localtime,type=bind,readonly",
+    "source=/etc/profile,target=/etc/profile,type=bind,readonly",
+    "source=/etc/bash.bashrc,target=/etc/bash.bashrc,type=bind,readonly",
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+  ],
+  "containerEnv": {
+    "DEVCONTAINER": "1",
+    "TERM": "${env:TERM}",
+    "TMUX": "${env:TMUX}",
+    "TELEGRAMSCOUT_HOST_ROOT": "${localWorkspaceFolder}"
+  },
+  "userEnvProbe": "interactiveShell",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "timonwong.shellcheck",
+        "DavidAnson.vscode-markdownlint",
+        "ms-vscode-remote.vscode-remote-extensionpack",
+        "ms-azuretools.vscode-docker",
+        "donjayamanne.githistory",
+        "eamodio.gitlens",
+        "foxundermoon.shell-format",
+        "golang.go",
+        "vadimcn.vscode-lldb",
+        "github.vscode-github-actions",
+        "SonarSource.sonarlint-vscode"
+      ],
+      "settings": {
+        "editor.tabSize": 2,
+        "editor.insertSpaces": true,
+        "editor.detectIndentation": false,
+        "editor.formatOnSave": true,
+        "files.insertFinalNewline": true,
+        "files.trimFinalNewlines": true,
+        "go.toolsManagement.autoUpdate": true,
+        "go.lintTool": "golangci-lint",
+        "go.lintOnSave": "package",
+        "go.useLanguageServer": true,
+        "[go]": {
+          "editor.defaultFormatter": "golang.go"
+        },
+        "shellcheck.customArgs": ["-o", "all"],
+        "sonarlint.connectedMode.project": {
+          "connectionId": "http-localhost-9000-",
+          "projectKey": "telegram-scout"
+        }
+      }
+    }
+  }
+}

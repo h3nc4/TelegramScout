@@ -1,0 +1,162 @@
+name: TelegramScout Development CI
+
+on:
+  push:
+    branches:
+      - "main"
+      - "release/*"
+  pull_request:
+    branches:
+      - "main"
+      - "release/*"
+
+jobs:
+  prepare:
+    name: Prepare environment
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.read_tag.outputs.tag }}
+    steps:
+      - name: Run actions/checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - id: read_tag
+        run: echo "tag=$(cat .github/VERSION)" >>"${GITHUB_OUTPUT}"
+
+  validate:
+    name: Validate Codebase
+    runs-on: ubuntu-latest
+    needs: prepare
+    container:
+      image: h3nc4/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
+      options: --user root
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - name: Go Mod Download
+        run: go mod download
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go code is not formatted:"
+            gofmt -d .
+            exit 1
+          fi
+      - name: Lint Go
+        run: golangci-lint run ./...
+      - name: Lint Shell Scripts
+        run: shellcheck scripts/*.sh
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: prepare
+    container:
+      image: h3nc4/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
+      options: --user root
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - name: Go Mod Download
+        run: go mod download
+      - name: Run tests
+        run: go test -v -coverprofile=coverage.out ./...
+      - name: Run actions/upload-artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: code-coverage
+          path: coverage.out
+          retention-days: 1
+
+  sonarqube:
+    name: SonarQube Scan
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run actions/checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+        with:
+          fetch-depth: 0 # Fetch history for SonarQube
+      - name: Run actions/download-artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: code-coverage
+      - name: Run SonarQube analysis
+        run: ./scripts/sonar.sh
+
+  build-binary:
+    name: Build Production Binary
+    needs: [test, prepare]
+    runs-on: ubuntu-latest
+    container:
+      image: h3nc4/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
+      options: --user root
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - name: Go Mod Download
+        run: go mod download
+      - name: Build binary
+        run: go build -o telegram-scout ./cmd/telegram-scout
+      - name: Verify binary
+        run: ./telegram-scout || true
+
+  build-test-container:
+    name: Build and Test Runtime Container
+    needs: [test, prepare]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare metadata
+        id: meta
+        run: |
+          echo "PUSH=${{ github.ref == 'refs/heads/main' }}" >>$GITHUB_OUTPUT
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "SHORT_SHA=$SHORT_SHA" >>$GITHUB_OUTPUT
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "TAGS=${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}:latest,${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}:$SHORT_SHA" >>$GITHUB_OUTPUT
+          else
+            echo "TAGS=${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}:latest" >>$GITHUB_OUTPUT
+          fi
+      - name: Run actions/checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - name: Run docker/setup-buildx-action
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Run docker/login-action
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Get build date
+        id: build_date
+        run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >>"${GITHUB_OUTPUT}"
+      - name: Build Container
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ steps.meta.outputs.PUSH }}
+          load: true
+          tags: ${{ steps.meta.outputs.TAGS }}
+          build-args: |
+            DEV_IMAGE_TAG=${{ needs.prepare.outputs.tag }}
+            COMMIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ steps.build_date.outputs.date }}
+      - name: Run container
+        run: |
+          # Start container detached
+          CONTAINER_ID=$(docker run -d ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}:latest)
+          echo "CONTAINER_ID=$CONTAINER_ID" >>${GITHUB_ENV}
+      - name: Verify logs
+        run: |
+          for i in {1..10}; do
+            if docker logs ${CONTAINER_ID} 2>&1 | grep -qi "hello"; then
+              echo "Container output verified."
+              exit 0
+            else
+              echo "Waiting for container to start..."
+              sleep 3
+            fi
+          done
+          echo "Container did not start." >&2
+          docker logs ${CONTAINER_ID} >&2
+          exit 1
+      - name: Cleanup
+        if: always()
+        run: docker rm -f ${CONTAINER_ID}
