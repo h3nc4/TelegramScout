@@ -24,11 +24,11 @@ FROM h3nc4/telegram-scout-dev:0.0.0 AS builder
 USER 0:0
 WORKDIR /app
 COPY go.mod ./
-# COPY go.sum ./
+COPY go.sum ./
 RUN go mod download
 
 COPY cmd/ ./cmd/
-# COPY internal/ ./internal/
+COPY internal/ ./internal/
 
 # Build static binary
 RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -o telegram-scout ./cmd/telegram-scout

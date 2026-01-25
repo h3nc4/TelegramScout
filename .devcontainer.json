@@ -1,7 +1,10 @@
 {
   "name": "telegram-scout",
   "image": "h3nc4/telegram-scout-dev:0.0.0",
-  "runArgs": ["--name=telegram-scout-devcontainer", "--network=host"],
+  "runArgs": [
+    "--name=telegram-scout-devcontainer",
+    "--network=host"
+  ],
   "remoteUser": "telegram-scout",
   "workspaceFolder": "/workspaces/telegram-scout",
   "overrideCommand": false,
@@ -29,7 +32,7 @@
         "donjayamanne.githistory",
         "eamodio.gitlens",
         "foxundermoon.shell-format",
-        "golang.go",
+        "golang.Go",
         "vadimcn.vscode-lldb",
         "github.vscode-github-actions",
         "SonarSource.sonarlint-vscode"
@@ -48,7 +51,10 @@
         "[go]": {
           "editor.defaultFormatter": "golang.go"
         },
-        "shellcheck.customArgs": ["-o", "all"],
+        "shellcheck.customArgs": [
+          "-o",
+          "all"
+        ],
         "sonarlint.connectedMode.project": {
           "connectionId": "http-localhost-9000-",
           "projectKey": "telegram-scout"
