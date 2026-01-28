@@ -19,7 +19,7 @@
 
 ################################################################################
 # Build stage
-FROM h3nc4/telegram-scout-dev:0.0.0 AS builder
+FROM h3nc4/telegram-scout-dev:0.0.0@sha256:9d4e3c51c5f66501ee991735ec822e277bd3e1a02fcfb6361661870c8c3e5d9e AS builder
 
 USER 0:0
 WORKDIR /app
@@ -35,7 +35,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -o telegram-scout ./cmd/te
 
 ################################################################################
 # Runtime stage
-FROM alpine:3.23 AS runtime
+FROM alpine:3.23@sha256:865b95f46d98cf867a156fe4a135ad3fe50d2056aa3f25ed31662dff6da4eb62 AS runtime
 
 # Install CA certificates for HTTPS
 RUN apk add --no-cache ca-certificates
