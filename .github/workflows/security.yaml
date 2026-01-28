@@ -29,12 +29,12 @@ jobs:
         with:
           go-version: "1.25.6"
       - name: Run github/codeql-action/init
-        uses: github/codeql-action/init@cdefb33c0f6224e58673d9004f47f7cb3e328b89 # v4
+        uses: github/codeql-action/init@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4
         with:
           languages: go
       - name: Build project for analysis
         run: go build ./...
       - name: Run github/codeql-action/analyze
-        uses: github/codeql-action/analyze@cdefb33c0f6224e58673d9004f47f7cb3e328b89 # v4
+        uses: github/codeql-action/analyze@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4
         with:
           category: "/language:go"
