@@ -34,7 +34,7 @@ func New() (*zap.Logger, error) {
 
 	// Format time
 	encoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
-		enc.AppendString("[" + t.Format(time.RFC3339Nano) + "]")
+		enc.AppendString("[" + t.Format(time.RFC3339) + "]")
 	}
 
 	// Format level: [INFO]

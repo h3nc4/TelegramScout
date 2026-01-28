@@ -19,22 +19,25 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"testing"
 )
 
-func TestLoadFromEnv(t *testing.T) {
-	// Set environment variables for testing
+func TestLoad(t *testing.T) {
+	// Setup Environment
 	setEnv := func(vars map[string]string) {
 		os.Clearenv()
 		for k, v := range vars {
-			os.Setenv(k, v)
+			if err := os.Setenv(k, v); err != nil {
+				t.Fatalf("failed to set env var %s: %v", k, err)
+			}
 		}
 	}
 	defer os.Clearenv()
 
 	// Define base valid configuration
-	baseConfig := map[string]string{
+	baseEnv := map[string]string{
 		"TELEGRAM_API_ID":    "12345",
 		"TELEGRAM_API_HASH":  "abcdef",
 		"TELEGRAM_PHONE":     "+1234567890",
@@ -42,15 +45,37 @@ func TestLoadFromEnv(t *testing.T) {
 		"TELEGRAM_CHAT_ID":   "987654321",
 	}
 
-	t.Run("Valid Config", func(t *testing.T) {
-		cfgMap := make(map[string]string)
-		for k, v := range baseConfig {
-			cfgMap[k] = v
-		}
-		cfgMap["TELEGRAM_PASSWORD"] = "secret_password"
-		setEnv(cfgMap)
+	// Create temporary config file
+	configFileContent := `
+chats:
+  - "cool_channel"
+keywords:
+  - "urgent"
+  - "sale"
+`
+	tmpFile, err := os.CreateTemp("", "config_*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		// Ignore error on remove in cleanup
+		_ = os.Remove(tmpFile.Name())
+	}()
 
-		cfg, err := LoadFromEnv()
+	if _, err := tmpFile.Write([]byte(configFileContent)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("Valid Full Config", func(t *testing.T) {
+		env := make(map[string]string)
+		maps.Copy(env, baseEnv)
+		env["TELEGRAM_CONFIG_FILE"] = tmpFile.Name()
+		setEnv(env)
+
+		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -58,52 +83,39 @@ func TestLoadFromEnv(t *testing.T) {
 		if cfg.AppID != 12345 {
 			t.Errorf("expected AppID 12345, got %d", cfg.AppID)
 		}
-		if cfg.ChatID != 987654321 {
-			t.Errorf("expected ChatID 987654321, got %d", cfg.ChatID)
+		if len(cfg.Monitoring.Chats) != 1 || cfg.Monitoring.Chats[0] != "cool_channel" {
+			t.Errorf("unexpected chats config: %v", cfg.Monitoring.Chats)
 		}
-		if cfg.BotToken != "bot_token" {
-			t.Errorf("expected BotToken 'bot_token', got %s", cfg.BotToken)
+		if len(cfg.Monitoring.Keywords) != 2 {
+			t.Errorf("expected 2 keywords, got %d", len(cfg.Monitoring.Keywords))
 		}
 	})
 
-	t.Run("Missing Bot Token", func(t *testing.T) {
-		cfgMap := make(map[string]string)
-		for k, v := range baseConfig {
-			if k != "TELEGRAM_BOT_TOKEN" {
-				cfgMap[k] = v
+	t.Run("Missing Env Var", func(t *testing.T) {
+		env := make(map[string]string)
+		for k, v := range baseEnv {
+			if k != "TELEGRAM_API_ID" {
+				env[k] = v
 			}
 		}
-		setEnv(cfgMap)
-		_, err := LoadFromEnv()
+		env["TELEGRAM_CONFIG_FILE"] = tmpFile.Name()
+		setEnv(env)
+
+		_, err := Load()
 		if err == nil {
-			t.Error("expected error, got nil")
+			t.Error("expected error due to missing API ID, got nil")
 		}
 	})
 
-	t.Run("Missing Chat ID", func(t *testing.T) {
-		cfgMap := make(map[string]string)
-		for k, v := range baseConfig {
-			if k != "TELEGRAM_CHAT_ID" {
-				cfgMap[k] = v
-			}
-		}
-		setEnv(cfgMap)
-		_, err := LoadFromEnv()
-		if err == nil {
-			t.Error("expected error, got nil")
-		}
-	})
+	t.Run("Missing Config File", func(t *testing.T) {
+		env := make(map[string]string)
+		maps.Copy(env, baseEnv)
+		env["TELEGRAM_CONFIG_FILE"] = "non_existent.yaml"
+		setEnv(env)
 
-	t.Run("Invalid Chat ID", func(t *testing.T) {
-		cfgMap := make(map[string]string)
-		for k, v := range baseConfig {
-			cfgMap[k] = v
-		}
-		cfgMap["TELEGRAM_CHAT_ID"] = "invalid_int"
-		setEnv(cfgMap)
-		_, err := LoadFromEnv()
+		_, err := Load()
 		if err == nil {
-			t.Error("expected error, got nil")
+			t.Error("expected error due to missing config file, got nil")
 		}
 	})
 }

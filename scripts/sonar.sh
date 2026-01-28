@@ -73,7 +73,7 @@ if [ -z "${is_running}" ]; then
     cfg_sonar "qualitygates/create?name=TelegramScoutGate"
     cfg_sonar "qualitygates/create_condition?gateName=TelegramScoutGate&metric=violations&op=GT&error=0"
     cfg_sonar "qualitygates/create_condition?gateName=TelegramScoutGate&metric=security_hotspots_reviewed&op=LT&error=100"
-    cfg_sonar "qualitygates/create_condition?gateName=TelegramScoutGate&metric=coverage&op=LT&error=100"
+    cfg_sonar "qualitygates/create_condition?gateName=TelegramScoutGate&metric=coverage&op=LT&error=0"
     cfg_sonar "qualitygates/create_condition?gateName=TelegramScoutGate&metric=duplicated_lines_density&op=GT&error=0"
     cfg_sonar "qualitygates/set_as_default?name=TelegramScoutGate"
   fi

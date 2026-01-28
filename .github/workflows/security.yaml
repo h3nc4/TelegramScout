@@ -24,14 +24,14 @@ jobs:
     steps:
       - name: Run actions/checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - name: Run actions/setup-go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.6"
       - name: Run github/codeql-action/init
         uses: github/codeql-action/init@cdefb33c0f6224e58673d9004f47f7cb3e328b89 # v4
         with:
           languages: go
-      - name: Run actions/setup-go
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.23"
       - name: Build project for analysis
         run: go build ./...
       - name: Run github/codeql-action/analyze

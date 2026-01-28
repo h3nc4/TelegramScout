@@ -19,6 +19,6 @@ jobs:
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: h3nc4/${{ vars.IMAGE_NAME }}
+          repository: ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}
           short-description: ${{ github.event.repository.description }}
           enable-url-completion: true

@@ -20,29 +20,22 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
 
 	"github.com/h3nc4/TelegramScout/internal/config"
 	"github.com/h3nc4/TelegramScout/internal/logger"
+	"github.com/h3nc4/TelegramScout/internal/model"
 	"github.com/h3nc4/TelegramScout/internal/notifier"
+	"github.com/h3nc4/TelegramScout/internal/scout"
 	"github.com/h3nc4/TelegramScout/internal/telegram"
 )
-
-// Hold dependencies for the application
-type AppContext struct {
-	Log      *zap.Logger
-	Config   *config.Config
-	Client   telegram.ScoutClient
-	Notifier notifier.Notifier
-	Writer   io.Writer
-}
 
 func main() {
 	// Initialize context
@@ -57,69 +50,107 @@ func main() {
 	}
 	defer func() { _ = log.Sync() }()
 
+	if err := run(ctx, log); err != nil {
+		log.Fatal("Application startup failed", zap.Error(err))
+	}
+}
+
+func run(ctx context.Context, log *zap.Logger) error {
 	// Load configuration
-	cfg, err := config.LoadFromEnv()
+	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal("failed to load configuration", zap.Error(err))
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Initialize Telegram client (MTProto)
-	client, err := telegram.NewClient(cfg, log)
-	if err != nil {
-		log.Fatal("failed to initialize telegram client", zap.Error(err))
+	if len(cfg.Monitoring.Chats) == 0 {
+		return fmt.Errorf("no chats configured for monitoring")
 	}
+
+	// Channel for streaming messages from Telegram client to Scout
+	msgChan := make(chan model.Message, 100)
 
 	// Initialize Notifier (Bot API)
 	notif := notifier.New(cfg, log)
 
-	app := &AppContext{
-		Log:      log,
-		Config:   cfg,
-		Client:   client,
-		Notifier: notif,
-		Writer:   os.Stdout,
+	// Initialize Scout
+	s := scout.New(cfg, notif, log)
+
+	// Start Scout consumer in background
+	go s.Start(ctx, msgChan)
+
+	log.Info("Starting TelegramScout",
+		zap.Int("monitored_chats", len(cfg.Monitoring.Chats)),
+		zap.Int("keywords", len(cfg.Monitoring.Keywords)),
+	)
+
+	// Send startup notification
+	if err := notif.Send(ctx, "TelegramScout is now online and monitoring."); err != nil {
+		log.Error("failed to send startup notification", zap.Error(err))
 	}
 
-	if err := run(ctx, app); err != nil {
-		log.Error("application error", zap.Error(err))
-		os.Exit(1)
+	// Enter supervisor loop
+	runSupervisor(ctx, cfg, log, msgChan)
+
+	log.Info("TelegramScout shutdown complete")
+	return nil
+}
+
+func runSupervisor(ctx context.Context, cfg *config.Config, log *zap.Logger, msgChan chan<- model.Message) {
+	backoff := time.Second
+	maxBackoff := 1 * time.Minute
+
+	for {
+		// Check context before restarting
+		if ctx.Err() != nil {
+			log.Info("Context cancelled, shutting down supervisor")
+			return
+		}
+
+		shouldRetry, err := startClientSession(ctx, cfg, log, msgChan)
+		if !shouldRetry {
+			if err != nil {
+				// Fatal error during initialization
+				log.Fatal("failed to initialize telegram client", zap.Error(err))
+			}
+			// Graceful exit
+			return
+		}
+
+		// Runtime error, attempt restart
+		log.Error("Telegram client crashed, restarting...", zap.Error(err), zap.Duration("backoff", backoff))
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+			// Exponential backoff with cap
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
 	}
 }
 
-// Execute main application logic
-func run(ctx context.Context, app *AppContext) error {
-	app.Log.Info("Starting TelegramScout",
-		zap.String("channel_input", app.Config.TargetChannel),
-		zap.Int("app_id", app.Config.AppID),
-	)
-
-	// Send notification via Bot
-	app.Log.Info("Sending startup notification...")
-	if err := app.Notifier.Send(ctx, "online"); err != nil {
-		app.Log.Error("failed to send startup notification", zap.Error(err))
-		// Continue despite notification failure
+func startClientSession(ctx context.Context, cfg *config.Config, log *zap.Logger, msgChan chan<- model.Message) (bool, error) {
+	log.Info("Initializing Telegram Client...")
+	client, err := telegram.NewClient(cfg, log, msgChan)
+	if err != nil {
+		return false, err
 	}
 
-	return app.Client.Run(ctx, func(ctx context.Context, api *tg.Client) error {
-		app.Log.Info("Connected to Telegram. Resolving peer and fetching history...")
-
-		messages, resolvedID, err := telegram.FetchChannelHistory(ctx, api, app.Config.TargetChannel, app.Config.Limit)
-		if err != nil {
-			return fmt.Errorf("fetching history failed: %w", err)
+	// Run Telegram Client (Blocking)
+	if err := client.Run(ctx); err != nil {
+		// If context is canceled, it's a graceful shutdown
+		if errors.Is(err, context.Canceled) {
+			log.Info("Telegram client stopped (context canceled)")
+			return false, nil
 		}
+		// Unexpected error
+		return true, err
+	}
 
-		app.Log.Info("Resolved Peer",
-			zap.String("input", app.Config.TargetChannel),
-			zap.Int64("peer_id", resolvedID),
-		)
-
-		app.Log.Info("Fetched messages", zap.Int("count", len(messages)))
-		fmt.Fprintf(app.Writer, "\n--- Messages from %s (ID: %d) ---\n", app.Config.TargetChannel, resolvedID)
-		for _, msg := range messages {
-			fmt.Fprintln(app.Writer, msg)
-		}
-		fmt.Fprintln(app.Writer, "--- End of fetch ---")
-
-		return nil
-	})
+	// Clean exit
+	log.Info("Telegram client stopped gracefully")
+	return false, nil
 }

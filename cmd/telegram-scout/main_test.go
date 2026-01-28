@@ -19,119 +19,62 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"fmt"
 	"testing"
+	"time"
 
-	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
 
 	"github.com/h3nc4/TelegramScout/internal/config"
+	"github.com/h3nc4/TelegramScout/internal/model"
+	"github.com/h3nc4/TelegramScout/internal/scout"
 )
 
-type mockClient struct {
-	runFunc func(ctx context.Context, handler func(ctx context.Context, api *tg.Client) error) error
+// Implement notifier.Notifier for testing
+type MockNotifier struct {
+	LastMessage string
+	CallCount   int
 }
 
-func (m *mockClient) Run(ctx context.Context, handler func(ctx context.Context, api *tg.Client) error) error {
-	if m.runFunc != nil {
-		return m.runFunc(ctx, handler)
-	}
+func (m *MockNotifier) Send(ctx context.Context, message string) error {
+	m.LastMessage = message
+	m.CallCount++
 	return nil
 }
 
-type mockNotifier struct {
-	sendFunc func(ctx context.Context, message string) error
-}
-
-func (m *mockNotifier) Send(ctx context.Context, message string) error {
-	if m.sendFunc != nil {
-		return m.sendFunc(ctx, message)
-	}
-	return nil
-}
-
-func TestRun(t *testing.T) {
+// Integration-like test for the wiring of components
+func TestWiring(t *testing.T) {
 	log := zap.NewNop()
 	cfg := &config.Config{
-		AppID:         12345,
-		TargetChannel: "test_channel",
-		Limit:         10,
+		Monitoring: config.MonitoringRules{
+			Chats:    []string{"test_chat"},
+			Keywords: []string{"alert"},
+		},
 	}
 
-	noopNotifier := &mockNotifier{}
+	notif := &MockNotifier{}
+	s := scout.New(cfg, notif, log)
+	msgChan := make(chan model.Message, 10)
 
-	t.Run("Successful Run", func(t *testing.T) {
-		var buf bytes.Buffer
-		client := &mockClient{
-			runFunc: func(ctx context.Context, handler func(ctx context.Context, api *tg.Client) error) error {
-				_, _ = fmt.Fprintf(&buf, "\n--- Messages from %s ---\n", cfg.TargetChannel)
-				_, _ = fmt.Fprintln(&buf, "[1234567890] Hello World")
-				_, _ = fmt.Fprintln(&buf, "--- End of fetch ---")
-				return nil
-			},
-		}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-		app := &AppContext{
-			Log:      log,
-			Config:   cfg,
-			Client:   client,
-			Notifier: noopNotifier,
-			Writer:   &buf,
-		}
+	// Start Scout
+	go s.Start(ctx, msgChan)
 
-		if err := run(context.Background(), app); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+	// Simulate incoming message matching keyword
+	msgChan <- model.Message{
+		ID:        1,
+		ChatID:    100,
+		ChatTitle: "test_chat",
+		Text:      "This is an ALERT message",
+		Date:      time.Now(),
+	}
 
-		output := buf.String()
-		if output == "" {
-			t.Error("expected output, got empty string")
-		}
-	})
+	// Allow time for processing
+	time.Sleep(100 * time.Millisecond)
 
-	t.Run("Notifier Error Should Not Fatal", func(t *testing.T) {
-		var buf bytes.Buffer
-		client := &mockClient{} // No-op success
-		failNotifier := &mockNotifier{
-			sendFunc: func(ctx context.Context, message string) error {
-				return errors.New("API down")
-			},
-		}
-
-		app := &AppContext{
-			Log:      log,
-			Config:   cfg,
-			Client:   client,
-			Notifier: failNotifier,
-			Writer:   &buf,
-		}
-
-		if err := run(context.Background(), app); err != nil {
-			t.Errorf("expected no error despite notifier fail, got: %v", err)
-		}
-	})
-
-	t.Run("Client Error", func(t *testing.T) {
-		client := &mockClient{
-			runFunc: func(ctx context.Context, handler func(ctx context.Context, api *tg.Client) error) error {
-				return errors.New("connection failed")
-			},
-		}
-
-		app := &AppContext{
-			Log:      log,
-			Config:   cfg,
-			Client:   client,
-			Notifier: noopNotifier,
-			Writer:   &bytes.Buffer{},
-		}
-
-		err := run(context.Background(), app)
-		if err == nil {
-			t.Error("expected error, got nil")
-		}
-	})
+	if notif.CallCount != 1 {
+		t.Errorf("expected 1 notification, got %d", notif.CallCount)
+	}
 }

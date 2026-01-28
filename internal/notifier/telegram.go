@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"go.uber.org/zap"
@@ -49,7 +50,7 @@ type TelegramNotifier struct {
 func New(cfg *config.Config, log *zap.Logger) *TelegramNotifier {
 	return &TelegramNotifier{
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 15 * time.Second,
 		},
 		log:     log,
 		token:   cfg.BotToken,
@@ -63,8 +64,10 @@ func (t *TelegramNotifier) Send(ctx context.Context, message string) error {
 	url := fmt.Sprintf("%s/bot%s/sendMessage", t.baseURL, t.token)
 
 	payload := map[string]interface{}{
-		"chat_id": t.chatID,
-		"text":    message,
+		"chat_id":                  t.chatID,
+		"text":                     message,
+		"parse_mode":               "HTML",
+		"disable_web_page_preview": true,
 	}
 
 	body, err := json.Marshal(payload)
@@ -72,7 +75,40 @@ func (t *TelegramNotifier) Send(ctx context.Context, message string) error {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(body))
+	const maxRetries = 3
+	var lastErr error
+
+	for i := range maxRetries {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		err := t.attemptSend(ctx, url, body)
+		if err == nil {
+			t.log.Info("Notification sent", zap.Int64("chat_id", t.chatID))
+			return nil
+		}
+
+		lastErr = err
+		t.log.Warn("Failed to send notification, retrying...",
+			zap.Int("attempt", i+1),
+			zap.Error(err),
+		)
+
+		// Exponential backoff
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(1<<i) * time.Second):
+			continue
+		}
+	}
+
+	return fmt.Errorf("failed to send notification after %d attempts: %w", maxRetries, lastErr)
+}
+
+func (t *TelegramNotifier) attemptSend(ctx context.Context, url string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -80,14 +116,23 @@ func (t *TelegramNotifier) Send(ctx context.Context, message string) error {
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return fmt.Errorf("network error: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram api returned non-200 status: %d", resp.StatusCode)
+	if resp.StatusCode == http.StatusOK {
+		return nil
 	}
 
-	t.log.Info("Notification sent", zap.Int64("chat_id", t.chatID))
-	return nil
+	// Handle Rate Limiting
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retryAfterStr := resp.Header.Get("Retry-After")
+		retryAfter, _ := strconv.Atoi(retryAfterStr)
+		if retryAfter == 0 {
+			retryAfter = 5 // Default backoff
+		}
+		return fmt.Errorf("rate limited, retry after %d seconds", retryAfter)
+	}
+
+	return fmt.Errorf("api returned status: %d", resp.StatusCode)
 }

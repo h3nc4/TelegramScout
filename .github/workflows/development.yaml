@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: prepare
     container:
-      image: h3nc4/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
+      image: ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
       options: --user root
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
@@ -41,7 +41,7 @@ jobs:
             exit 1
           fi
       - name: Lint Go
-        run: golangci-lint run ./...
+        run: GOFLAGS="-buildvcs=false" golangci-lint run ./...
       - name: Lint Shell Scripts
         run: shellcheck scripts/*.sh
 
@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: prepare
     container:
-      image: h3nc4/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
+      image: ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
       options: --user root
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
@@ -86,14 +86,14 @@ jobs:
     needs: [test, prepare]
     runs-on: ubuntu-latest
     container:
-      image: h3nc4/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
+      image: ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
       options: --user root
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - name: Go Mod Download
         run: go mod download
       - name: Build binary
-        run: go build -o telegram-scout ./cmd/telegram-scout
+        run: go build -buildvcs=false -o telegram-scout ./cmd/telegram-scout
       - name: Verify binary
         run: ./telegram-scout || true
 
@@ -146,7 +146,7 @@ jobs:
       - name: Verify logs
         run: |
           for i in {1..10}; do
-            if docker logs ${CONTAINER_ID} 2>&1 | grep -qi "hello"; then
+            if docker logs ${CONTAINER_ID} 2>&1 | grep -qi "failed to load configuration"; then
               echo "Container output verified."
               exit 0
             else

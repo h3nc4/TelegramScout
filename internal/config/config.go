@@ -22,24 +22,37 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+
+	"gopkg.in/yaml.v3"
 )
 
-// Hold application configuration
+// Define the structure of the YAML config file
+type MonitoringRules struct {
+	Chats    []string `yaml:"chats"`
+	Keywords []string `yaml:"keywords"`
+}
+
+// Hold all application configuration
 type Config struct {
-	AppID          int
-	AppHash        string
-	Phone          string
-	Password       string // 2FA Cloud Password
-	Session        string
-	BotToken       string // Telegram Bot API Token
-	ChatID         int64  // Target Chat ID for notifications
-	TargetChannel  string
-	Limit          int
+	// MTProto Credentials
+	AppID    int
+	AppHash  string
+	Phone    string
+	Password string // 2FA Cloud Password
+	Session  string
+
+	// Bot Credentials
+	BotToken string
+	ChatID   int64
+
+	// Logic Configuration
+	Monitoring     MonitoringRules
 	ConfigFilePath string
 }
 
-// Populate Config struct from environment variables
-func LoadFromEnv() (*Config, error) {
+// Populate Config from environment variables and YAML file
+func Load() (*Config, error) {
+	// Load Credentials from Env
 	appIDStr := os.Getenv("TELEGRAM_API_ID")
 	if appIDStr == "" {
 		return nil, fmt.Errorf("TELEGRAM_API_ID is required")
@@ -75,23 +88,40 @@ func LoadFromEnv() (*Config, error) {
 		return nil, fmt.Errorf("invalid TELEGRAM_CHAT_ID: %w", err)
 	}
 
-	// Optional configurations
-	password := os.Getenv("TELEGRAM_PASSWORD")
-	session := os.Getenv("TELEGRAM_SESSION")
-	targetChannel := os.Getenv("TELEGRAM_TARGET_CHANNEL")
-	if targetChannel == "" {
-		targetChannel = "telegram" // Default channel
+	// Load Rules from YAML
+	configPath := os.Getenv("TELEGRAM_CONFIG_FILE")
+	if configPath == "" {
+		configPath = "config.yaml"
+	}
+
+	rules, err := loadRules(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load monitoring rules from %s: %w", configPath, err)
 	}
 
 	return &Config{
-		AppID:         appID,
-		AppHash:       appHash,
-		Phone:         phone,
-		Password:      password,
-		Session:       session,
-		BotToken:      botToken,
-		ChatID:        chatID,
-		TargetChannel: targetChannel,
-		Limit:         50, // Default fetch limit
+		AppID:          appID,
+		AppHash:        appHash,
+		Phone:          phone,
+		Password:       os.Getenv("TELEGRAM_PASSWORD"),
+		Session:        os.Getenv("TELEGRAM_SESSION"),
+		BotToken:       botToken,
+		ChatID:         chatID,
+		Monitoring:     *rules,
+		ConfigFilePath: configPath,
 	}, nil
+}
+
+func loadRules(path string) (*MonitoringRules, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var rules MonitoringRules
+	if err := yaml.Unmarshal(data, &rules); err != nil {
+		return nil, err
+	}
+
+	return &rules, nil
 }

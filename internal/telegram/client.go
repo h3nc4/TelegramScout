@@ -27,30 +27,41 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/telegram/message"
+	"github.com/gotd/td/telegram/message/peer"
 	"github.com/gotd/td/telegram/query"
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
 
 	"github.com/h3nc4/TelegramScout/internal/config"
+	"github.com/h3nc4/TelegramScout/internal/model"
 )
-
-// Define interface for interacting with Telegram
-type ScoutClient interface {
-	Run(ctx context.Context, handler func(ctx context.Context, api *tg.Client) error) error
-}
 
 // Wrap MTProto client
 type Client struct {
-	client *telegram.Client
-	log    *zap.Logger
-	cfg    *config.Config
+	client     *telegram.Client
+	log        *zap.Logger
+	cfg        *config.Config
+	msgChan    chan<- model.Message
+	dispatcher tg.UpdateDispatcher
+
+	// Cache for resolved peer info (ID -> Title/Username)
+	// Also acts as the ALLOWLIST for monitoring.
+	peerCache map[int64]peerInfo
+	cacheMux  sync.RWMutex
+
 	stdin  io.Reader
 	stdout io.Writer
+}
+
+type peerInfo struct {
+	Title    string
+	Username string
 }
 
 // Implement session.Storage for in-memory handling
@@ -97,9 +108,12 @@ func (a *terminalAuthenticator) Password(ctx context.Context) (string, error) {
 	if a.password != "" {
 		return a.password, nil
 	}
-	fmt.Fprintln(a.writer, "2FA Enabled: Cloud password required.")
-	fmt.Fprint(a.writer, "Enter Password: ")
-
+	if _, err := fmt.Fprintln(a.writer, "2FA Enabled: Cloud password required."); err != nil {
+		return "", err
+	}
+	if _, err := fmt.Fprint(a.writer, "Enter Password: "); err != nil {
+		return "", err
+	}
 	var pwd string
 	if _, err := fmt.Fscanln(a.reader, &pwd); err != nil {
 		return "", err
@@ -109,9 +123,12 @@ func (a *terminalAuthenticator) Password(ctx context.Context) (string, error) {
 
 // Prompt user to enter login code
 func (a *terminalAuthenticator) Code(ctx context.Context, sentCode *tg.AuthSentCode) (string, error) {
-	fmt.Fprintln(a.writer, "Action Required: Please enter the login code sent to your Telegram app or via SMS.")
-	fmt.Fprint(a.writer, "Enter Code: ")
-
+	if _, err := fmt.Fprintln(a.writer, "Action Required: Please enter the login code sent to your Telegram app or via SMS."); err != nil {
+		return "", err
+	}
+	if _, err := fmt.Fprint(a.writer, "Enter Code: "); err != nil {
+		return "", err
+	}
 	var code string
 	if _, err := fmt.Fscanln(a.reader, &code); err != nil {
 		return "", err
@@ -128,174 +145,291 @@ func (a *terminalAuthenticator) SignUp(ctx context.Context) (auth.UserInfo, erro
 }
 
 // Create new Telegram client instance
-func NewClient(cfg *config.Config, log *zap.Logger) (*Client, error) {
-	// Initialize session storage
+func NewClient(cfg *config.Config, log *zap.Logger, msgChan chan<- model.Message) (*Client, error) {
 	var storage session.Storage
-
 	if cfg.Session != "" {
-		storage = &memorySession{
-			data: []byte(cfg.Session),
-		}
+		storage = &memorySession{data: []byte(cfg.Session)}
 	} else {
-		storage = &session.FileStorage{
-			Path: "session.json",
-		}
+		storage = &session.FileStorage{Path: "session.json"}
 	}
 
+	// Setup update dispatcher
+	d := tg.NewUpdateDispatcher()
+
 	opts := telegram.Options{
-		Logger:         log,
+		// Reduce log noise from the library
+		Logger:         log.WithOptions(zap.IncreaseLevel(zap.WarnLevel)),
 		SessionStorage: storage,
+		UpdateHandler:  d,
 	}
 
 	client := telegram.NewClient(cfg.AppID, cfg.AppHash, opts)
-	return &Client{
-		client: client,
-		log:    log,
-		cfg:    cfg,
-		stdin:  os.Stdin,
-		stdout: os.Stdout,
-	}, nil
+	c := &Client{
+		client:     client,
+		log:        log,
+		cfg:        cfg,
+		msgChan:    msgChan,
+		dispatcher: d,
+		peerCache:  make(map[int64]peerInfo),
+		stdin:      os.Stdin,
+		stdout:     os.Stdout,
+	}
+
+	// Register handlers
+	d.OnNewChannelMessage(c.handleNewChannelMessage)
+	d.OnNewMessage(c.handleNewMessage)
+
+	return c, nil
 }
 
-// Start client connection and execute provided logic
-func (c *Client) Run(ctx context.Context, action func(ctx context.Context, api *tg.Client) error) error {
+// Start client, authenticate, resolve peers, and listen for updates
+func (c *Client) Run(ctx context.Context) error {
 	return c.client.Run(ctx, func(ctx context.Context) error {
-		// Check auth status
-		status, err := c.client.Auth().Status(ctx)
-		if err != nil {
-			return fmt.Errorf("auth status check failed: %w", err)
+		c.log.Info("Telegram client connected to MTProto")
+
+		// Authenticate
+		if err := c.authenticate(ctx); err != nil {
+			return err
 		}
 
-		// If not authorized, start auth flow
-		if !status.Authorized {
-			c.log.Info("Starting new authentication flow")
-
-			authenticator := &terminalAuthenticator{
-				phone:    c.cfg.Phone,
-				password: c.cfg.Password,
-				reader:   c.stdin,
-				writer:   c.stdout,
-			}
-
-			flow := auth.NewFlow(authenticator, auth.SendCodeOptions{})
-
-			if err := c.client.Auth().IfNecessary(ctx, flow); err != nil {
-				return fmt.Errorf("authentication failed: %w", err)
-			}
-		} else {
-			c.log.Info("Using existing session")
+		// Resolve configured chats
+		c.log.Info("Resolving configured channels...")
+		if err := c.resolveMonitoringPeers(ctx); err != nil {
+			c.log.Error("Failed to resolve some peers", zap.Error(err))
 		}
 
-		return action(ctx, c.client.API())
+		c.log.Info("Client is running and listening for updates...")
+		<-ctx.Done()
+		return nil
 	})
 }
 
-// Retrieve recent messages from channel
-func FetchChannelHistory(ctx context.Context, api *tg.Client, target string, limit int) ([]string, int64, error) {
-	p, id, err := resolvePeer(ctx, api, target)
+func (c *Client) authenticate(ctx context.Context) error {
+	status, err := c.client.Auth().Status(ctx)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to resolve peer %q: %w", target, err)
+		return fmt.Errorf("auth status check failed: %w", err)
 	}
 
-	res, err := api.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
-		Peer:  p,
-		Limit: limit,
-	})
-	if err != nil {
-		return nil, id, fmt.Errorf("failed to get history: %w", err)
+	if !status.Authorized {
+		c.log.Info("Starting new authentication flow")
+		authenticator := &terminalAuthenticator{
+			phone:    c.cfg.Phone,
+			password: c.cfg.Password,
+			reader:   c.stdin,
+			writer:   c.stdout,
+		}
+		flow := auth.NewFlow(authenticator, auth.SendCodeOptions{})
+		if err := c.client.Auth().IfNecessary(ctx, flow); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
+	} else {
+		c.log.Info("Using existing session")
 	}
+	return nil
+}
 
-	var msgs []string
-	var messages []tg.MessageClass
+func (c *Client) resolveMonitoringPeers(ctx context.Context) error {
+	sender := message.NewSender(c.client.API())
 
-	switch m := res.(type) {
-	case *tg.MessagesMessages:
-		messages = m.Messages
-	case *tg.MessagesMessagesSlice:
-		messages = m.Messages
-	case *tg.MessagesChannelMessages:
-		messages = m.Messages
-	default:
-		return nil, id, errors.New("unknown message response type")
-	}
+	// Store IDs to look for in dialogs
+	// Map: NormalizedID -> OriginalString
+	wantedIDs := make(map[int64]string)
 
-	for _, m := range messages {
-		if msg, ok := m.(*tg.Message); ok {
-			if msg.Message != "" {
-				msgs = append(msgs, fmt.Sprintf("[%d] %s", msg.Date, msg.Message))
-			}
+	for _, target := range c.cfg.Monitoring.Chats {
+		// Check if it's a numeric ID
+		if id, ok := parseID(target); ok {
+			wantedIDs[id] = target
+			continue
+		}
+
+		// If it's a username, resolve directly
+		if err := c.resolveUsername(ctx, sender, target); err != nil {
+			c.log.Warn("Could not resolve chat username", zap.String("chat", target), zap.Error(err))
 		}
 	}
 
-	return msgs, id, nil
+	// Scan dialogs for the collected numeric IDs
+	if len(wantedIDs) > 0 {
+		return c.scanDialogsForIDs(ctx, wantedIDs)
+	}
+	return nil
 }
 
-// Determine input peer from string (username) or int64 (ID)
-func resolvePeer(ctx context.Context, api *tg.Client, target string) (tg.InputPeerClass, int64, error) {
-	// Try to parse an integer ID
-	if id, err := strconv.ParseInt(target, 10, 64); err == nil {
-		return findPeerByID(ctx, api, id)
-	}
-
-	// Treat as username
-	sender := message.NewSender(api)
-	inputPeer, err := sender.Resolve(target).AsInputPeer(ctx)
+func (c *Client) resolveUsername(ctx context.Context, sender *message.Sender, target string) error {
+	cleanTarget := strings.TrimPrefix(target, "@")
+	p, err := sender.Resolve(cleanTarget).AsInputPeer(ctx)
 	if err != nil {
-		return nil, 0, err
+		return err
 	}
 
-	// Extract ID for logging
-	var resolvedID int64
-	switch p := inputPeer.(type) {
-	case *tg.InputPeerChannel:
-		resolvedID = p.ChannelID
-	case *tg.InputPeerUser:
-		resolvedID = p.UserID
-	case *tg.InputPeerChat:
-		resolvedID = p.ChatID
-	}
-
-	return inputPeer, resolvedID, nil
+	id := getPeerID(p)
+	// Optimistically cache using the input username as title
+	c.updatePeerCache(id, cleanTarget, cleanTarget)
+	c.log.Info("Resolved chat by username", zap.String("target", target), zap.Int64("id", id))
+	return nil
 }
 
-// Iterate over dialogs to find chat with matching ID
-func findPeerByID(ctx context.Context, api *tg.Client, targetID int64) (tg.InputPeerClass, int64, error) {
-	// Normalize ID
-	searchID := targetID
-	if searchID < 0 {
-		strID := fmt.Sprintf("%d", targetID)
-		if strings.HasPrefix(strID, "-100") {
-			parsed, _ := strconv.ParseInt(strID[4:], 10, 64)
-			searchID = parsed
-		} else {
-			searchID = -searchID
-		}
-	}
+func (c *Client) scanDialogsForIDs(ctx context.Context, wantedIDs map[int64]string) error {
+	c.log.Info("Scanning dialogs to resolve chat IDs...", zap.Int("count", len(wantedIDs)))
 
-	// Iterate dialogs to find the chat
-	iter := query.GetDialogs(api).Iter()
+	iter := query.GetDialogs(c.client.API()).Iter()
 	for iter.Next(ctx) {
 		d := iter.Value()
+		id := getPeerID(d.Peer)
 
-		var currentID int64
+		if originalTarget, found := wantedIDs[id]; found {
+			c.log.Info("Found chat by ID", zap.String("target", originalTarget), zap.Int64("id", id))
 
-		switch p := d.Peer.(type) {
-		case *tg.InputPeerUser:
-			currentID = p.UserID
-		case *tg.InputPeerChat:
-			currentID = p.ChatID
-		case *tg.InputPeerChannel:
-			currentID = p.ChannelID
+			title, username := getPeerInfoFromEntities(d.Peer, d.Entities)
+			if title == "" {
+				title = originalTarget
+			}
+
+			c.updatePeerCache(id, title, username)
+			delete(wantedIDs, id)
 		}
 
-		if currentID == searchID {
-			return d.Peer, currentID, nil
+		if len(wantedIDs) == 0 {
+			break
 		}
 	}
 
-	if err := iter.Err(); err != nil {
-		return nil, 0, fmt.Errorf("error iterating dialogs: %w", err)
+	for _, t := range wantedIDs {
+		c.log.Warn("Could not find chat ID in recent dialogs (ensure you have joined the channel/group)", zap.String("target", t))
+	}
+	return nil
+}
+
+func (c *Client) handleNewChannelMessage(ctx context.Context, e tg.Entities, u *tg.UpdateNewChannelMessage) error {
+	msg, ok := u.Message.(*tg.Message)
+	if !ok {
+		return nil
+	}
+	return c.emitMessage(ctx, msg, e)
+}
+
+func (c *Client) handleNewMessage(ctx context.Context, e tg.Entities, u *tg.UpdateNewMessage) error {
+	msg, ok := u.Message.(*tg.Message)
+	if !ok {
+		return nil
+	}
+	return c.emitMessage(ctx, msg, e)
+}
+
+func (c *Client) emitMessage(ctx context.Context, msg *tg.Message, entities tg.Entities) error {
+	var chatID int64
+	var title, username string
+
+	// Handle different Peer types
+	switch p := msg.PeerID.(type) {
+	case *tg.PeerChannel:
+		chatID = p.ChannelID
+		if ch, ok := entities.Channels[chatID]; ok {
+			title = ch.Title
+			username = ch.Username
+		}
+	case *tg.PeerChat:
+		chatID = p.ChatID
+		if ch, ok := entities.Chats[chatID]; ok {
+			title = ch.Title
+		}
+	case *tg.PeerUser:
+		chatID = p.UserID
 	}
 
-	return nil, 0, fmt.Errorf("peer with ID %d not found in recent dialogs (ensure you have joined/started the chat)", targetID)
+	// Only process messages from chats resolved.
+	c.cacheMux.RLock()
+	info, allowed := c.peerCache[chatID]
+	c.cacheMux.RUnlock()
+
+	if !allowed {
+		// Ignore messages from non-monitored chats
+		return nil
+	}
+
+	// Use cached info if entity data was missing
+	if title == "" {
+		title = info.Title
+	}
+	if username == "" {
+		username = info.Username
+	}
+
+	// Construct Link
+	link := ""
+	if username != "" {
+		link = fmt.Sprintf("https://t.me/%s/%d", username, msg.ID)
+	} else {
+		// Private link format
+		link = fmt.Sprintf("https://t.me/c/%d/%d", chatID, msg.ID)
+	}
+
+	c.msgChan <- model.Message{
+		ID:        msg.ID,
+		ChatID:    chatID,
+		ChatTitle: title,
+		Username:  username,
+		Text:      msg.Message,
+		Date:      time.Unix(int64(msg.Date), 0),
+		Link:      link,
+	}
+
+	return nil
+}
+
+// Helpers
+
+func (c *Client) updatePeerCache(id int64, title, username string) {
+	c.cacheMux.Lock()
+	defer c.cacheMux.Unlock()
+	c.peerCache[id] = peerInfo{
+		Title:    title,
+		Username: username,
+	}
+}
+
+func parseID(s string) (int64, bool) {
+	// Handle -100 prefix (Bot API Channel format)
+	if strings.HasPrefix(s, "-100") {
+		id, err := strconv.ParseInt(s[4:], 10, 64)
+		return id, err == nil
+	}
+	// Handle - prefix (Standard Chat format)
+	if strings.HasPrefix(s, "-") {
+		id, err := strconv.ParseInt(s[1:], 10, 64)
+		return id, err == nil
+	}
+	// Normal parsing
+	id, err := strconv.ParseInt(s, 10, 64)
+	return id, err == nil
+}
+
+func getPeerID(p tg.InputPeerClass) int64 {
+	switch t := p.(type) {
+	case *tg.InputPeerChannel:
+		return t.ChannelID
+	case *tg.InputPeerChat:
+		return t.ChatID
+	case *tg.InputPeerUser:
+		return t.UserID
+	}
+	return 0
+}
+
+func getPeerInfoFromEntities(p tg.InputPeerClass, e peer.Entities) (string, string) {
+	switch t := p.(type) {
+	case *tg.InputPeerChannel:
+		if ch, ok := e.Channel(t.ChannelID); ok {
+			return ch.Title, ch.Username
+		}
+	case *tg.InputPeerChat:
+		if ch, ok := e.Chat(t.ChatID); ok {
+			return ch.Title, ""
+		}
+	case *tg.InputPeerUser:
+		if u, ok := e.User(t.UserID); ok {
+			return u.Username, u.Username
+		}
+	}
+	return "", ""
 }

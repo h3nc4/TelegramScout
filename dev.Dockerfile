@@ -52,6 +52,10 @@ RUN mkdir -p /rootfs/usr/local && \
   tar -xzf /tmp/go.tar.gz -C /rootfs/usr/local
 
 ################################################################################
+# GolangCI-Lint stage
+FROM golangci/golangci-lint:v2.8 AS golangci-lint-stage
+
+################################################################################
 # Debian main stage
 FROM debian:trixie@sha256:5cf544fad978371b3df255b61e209b373583cb88b733475c86e49faa15ac2104 AS main
 ARG USER
@@ -99,6 +103,8 @@ RUN apt-get install --no-install-recommends -y -qq \
 
 # Install Go
 COPY --from=go-stage /rootfs/ /
+# Install GolangCI-Lint
+COPY --from=golangci-lint-stage /usr/bin/golangci-lint /usr/local/bin/golangci-lint
 
 ########################################
 # Create a non-root developing user and configure doas

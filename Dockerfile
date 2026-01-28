@@ -35,7 +35,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -o telegram-scout ./cmd/te
 
 ################################################################################
 # Runtime stage
-FROM alpine:3.19 AS runtime
+FROM alpine:3.23 AS runtime
 
 # Install CA certificates for HTTPS
 RUN apk add --no-cache ca-certificates

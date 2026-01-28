@@ -20,8 +20,10 @@ package notifier
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"go.uber.org/zap"
@@ -36,7 +38,7 @@ func TestTelegramNotifier_Send(t *testing.T) {
 		ChatID:   123456,
 	}
 
-	t.Run("Success", func(t *testing.T) {
+	t.Run("Success with HTML formatting", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
 				t.Errorf("expected POST method, got %s", r.Method)
@@ -44,6 +46,20 @@ func TestTelegramNotifier_Send(t *testing.T) {
 			if r.URL.Path != "/bottest_token/sendMessage" {
 				t.Errorf("unexpected path: %s", r.URL.Path)
 			}
+
+			// Verify payload contains parse_mode
+			var payload map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("failed to decode body: %v", err)
+			}
+
+			if payload["parse_mode"] != "HTML" {
+				t.Errorf("expected parse_mode HTML, got %v", payload["parse_mode"])
+			}
+			if payload["text"] != "<b>Hello</b>" {
+				t.Errorf("expected text <b>Hello</b>, got %v", payload["text"])
+			}
+
 			w.WriteHeader(http.StatusOK)
 		}))
 		defer server.Close()
@@ -51,22 +67,45 @@ func TestTelegramNotifier_Send(t *testing.T) {
 		n := New(cfg, log)
 		n.baseURL = server.URL // Override base URL for testing
 
-		if err := n.Send(context.Background(), "Hello"); err != nil {
+		if err := n.Send(context.Background(), "<b>Hello</b>"); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 
-	t.Run("API Error", func(t *testing.T) {
+	t.Run("Retry on 500", func(t *testing.T) {
+		var calls int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusBadRequest)
+			count := atomic.AddInt32(&calls, 1)
+			if count < 3 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
 		}))
 		defer server.Close()
 
 		n := New(cfg, log)
 		n.baseURL = server.URL
 
-		if err := n.Send(context.Background(), "Hello"); err == nil {
-			t.Error("expected error, got nil")
+		if err := n.Send(context.Background(), "RetryMe"); err != nil {
+			t.Errorf("expected success after retry, got error: %v", err)
+		}
+		if atomic.LoadInt32(&calls) != 3 {
+			t.Errorf("expected 3 calls, got %d", calls)
+		}
+	})
+
+	t.Run("Fail after max retries", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer server.Close()
+
+		n := New(cfg, log)
+		n.baseURL = server.URL
+
+		if err := n.Send(context.Background(), "FailMe"); err == nil {
+			t.Error("expected error after max retries, got nil")
 		}
 	})
 }
