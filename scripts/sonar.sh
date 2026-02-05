@@ -25,7 +25,7 @@ if [ "$1" = "-i" ]; then
 fi
 
 sonar_container_name="sonarqube"
-sonar_image="sonarqube:26.1.0.118079-community"
+sonar_image="sonarqube:26.2.0.119303-community"
 sonar_scan_image="sonarsource/sonar-scanner-cli:12"
 sonar_url="http://localhost:9000"
 
