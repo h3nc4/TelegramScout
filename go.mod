@@ -3,7 +3,7 @@ module github.com/h3nc4/TelegramScout
 go 1.25.6
 
 require (
-	github.com/gotd/td v0.145.2
+	github.com/gotd/td v0.147.0
 	go.uber.org/zap v1.28.0
 	gopkg.in/yaml.v3 v3.0.1
 )
