@@ -31,7 +31,7 @@ ARG GOPATH="/home/${USER}/go"
 
 ################################################################################
 # Go stage
-FROM debian:trixie-20260610@sha256:fe7312b5f05bf5f43fad76bcd8945642e4e47a68aefd1b73f447615899d0fac1 AS go-stage
+FROM debian:trixie-20260623@sha256:d07d1b51c39f51188e60be9b64e6bf769fa94e187f092bc32b91305cfa34ba5a AS go-stage
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
   gnupg
@@ -57,7 +57,7 @@ FROM golangci/golangci-lint:v2.12@sha256:5cceeef04e53efe1470638d4b4b4f5ceefd5749
 
 ################################################################################
 # Debian main stage
-FROM debian:trixie-20260610@sha256:fe7312b5f05bf5f43fad76bcd8945642e4e47a68aefd1b73f447615899d0fac1 AS main
+FROM debian:trixie-20260623@sha256:d07d1b51c39f51188e60be9b64e6bf769fa94e187f092bc32b91305cfa34ba5a AS main
 ARG USER
 ARG UID
 ARG GID
