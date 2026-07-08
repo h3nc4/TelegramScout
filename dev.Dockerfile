@@ -19,7 +19,7 @@
 
 ########################################
 # Go version
-ARG GO_VERSION="1.26.4"
+ARG GO_VERSION="1.26.5"
 ARG GO_DISTRO="go${GO_VERSION}.linux-amd64"
 
 ########################################
