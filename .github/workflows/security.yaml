@@ -27,7 +27,7 @@ jobs:
       - name: Run actions/setup-go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: "1.26.5"
+          go-version: "1.26.6"
       - name: Run github/codeql-action/init
         uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
         with:
