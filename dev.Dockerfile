@@ -53,7 +53,7 @@ RUN mkdir -p /rootfs/usr/local && \
 
 ################################################################################
 # GolangCI-Lint stage
-FROM golangci/golangci-lint:v2.12@sha256:5cceeef04e53efe1470638d4b4b4f5ceefd574955ab3941b2d9a68a8c9ad5240 AS golangci-lint-stage
+FROM golangci/golangci-lint:v2.13@sha256:8bd3a16a42f03207464b9f7cf3f9e8d3549d976ace271e583cad11aa11218974 AS golangci-lint-stage
 
 ################################################################################
 # Debian main stage
