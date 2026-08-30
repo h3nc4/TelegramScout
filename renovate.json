@@ -74,8 +74,8 @@
       "description": "Update Go version in CI/Dev Dockerfiles",
       "customType": "regex",
       "managerFilePatterns": [
-        "/^dev\\.Dockerfile$/",
-        "/^Dockerfile$/"
+        "/^docker/dev\\.Dockerfile$/",
+        "/^docker/Dockerfile$/"
       ],
       "matchStrings": [
         "ARG GO_VERSION=\"(?<currentValue>.*?)\""

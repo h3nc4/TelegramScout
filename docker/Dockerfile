@@ -19,7 +19,9 @@
 
 ################################################################################
 # Build stage
-FROM h3nc4/telegram-scout-dev:0.0.0@sha256:9d4e3c51c5f66501ee991735ec822e277bd3e1a02fcfb6361661870c8c3e5d9e AS builder
+ARG DEV_IMAGE="h3nc4/telegram-scout-dev:0"
+
+FROM ${DEV_IMAGE} AS builder
 
 USER 0:0
 WORKDIR /app

@@ -10,55 +10,57 @@ on:
       - "main"
       - "release/*"
 
+env:
+  DEV_DOCKER_ARGS: -v ${HOME:?}/ci-cache/go-mod:/cache/go-mod -v ${HOME:?}/ci-cache/go-build:/cache/go-build -e GOMODCACHE=/cache/go-mod -e GOCACHE=/cache/go-build
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  prepare:
-    name: Prepare environment
+  checks:
+    name: Lint, test and build
     runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.read_tag.outputs.tag }}
     steps:
       - name: Run actions/checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - id: read_tag
-        run: echo "tag=$(cat .github/VERSION)" >>"${GITHUB_OUTPUT}"
-
-  validate:
-    name: Validate Codebase
-    runs-on: ubuntu-latest
-    needs: prepare
-    container:
-      image: ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
-      options: --user root
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Go Mod Download
-        run: go mod download
-      - name: Check formatting
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # dev-image diffs against the base to spot image changes
+      - name: Run h3nc4/dev-image-action
+        uses: h3nc4/dev-image-action@896daea2e2bdda063d6992243c634f156ce057ac # v1
+        with:
+          published-repo: ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}-dev
+          docker-args: ${{ env.DEV_DOCKER_ARGS }}
+      - name: Run actions/cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/ci-cache/go-mod
+            ~/ci-cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: Create the cache directories
         run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "Go code is not formatted:"
-            gofmt -d .
-            exit 1
-          fi
-      - name: Lint Go
-        run: GOFLAGS="-buildvcs=false" golangci-lint run ./...
-      - name: Lint Shell Scripts
-        run: shellcheck scripts/*.sh
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    needs: prepare
-    container:
-      image: ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
-      options: --user root
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Go Mod Download
-        run: go mod download
-      - name: Run tests
-        run: go test -v -coverprofile=coverage.out ./...
+          mkdir -p ~/ci-cache/go-mod
+          mkdir -p ~/ci-cache/go-build
+      - name: Lint, test and build
+        run: |
+          $DEV_RUN -c '
+            set -e
+            go mod download
+            if [ -n "$(gofmt -l .)" ]; then
+              echo "Go code is not formatted:"
+              gofmt -d .
+              exit 1
+            fi
+            GOFLAGS="-buildvcs=false" golangci-lint run ./...
+            shellcheck scripts/*.sh
+            go test -v -coverprofile=coverage.out ./...
+            go build -buildvcs=false -o telegram-scout ./cmd/telegram-scout
+          '
       - name: Run actions/upload-artifact
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: code-coverage
@@ -67,7 +69,7 @@ jobs:
 
   sonarqube:
     name: SonarQube Scan
-    needs: [test]
+    needs: [checks]
     runs-on: ubuntu-latest
     steps:
       - name: Run actions/checkout
@@ -81,25 +83,9 @@ jobs:
       - name: Run SonarQube analysis
         run: ./scripts/sonar.sh
 
-  build-binary:
-    name: Build Production Binary
-    needs: [test, prepare]
-    runs-on: ubuntu-latest
-    container:
-      image: ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}-dev:${{ needs.prepare.outputs.tag }}
-      options: --user root
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Go Mod Download
-        run: go mod download
-      - name: Build binary
-        run: go build -buildvcs=false -o telegram-scout ./cmd/telegram-scout
-      - name: Verify binary
-        run: ./telegram-scout || true
-
   build-test-container:
     name: Build and Test Runtime Container
-    needs: [test, prepare]
+    needs: [checks]
     runs-on: ubuntu-latest
     steps:
       - name: Prepare metadata
@@ -115,6 +101,9 @@ jobs:
           fi
       - name: Run actions/checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Read the published dev image tag
+        id: dev_tag
+        run: echo "tag=$(cat .github/VERSION)" >>"$GITHUB_OUTPUT"
       - name: Run docker/setup-buildx-action
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Run docker/login-action
@@ -125,38 +114,36 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Get build date
         id: build_date
-        run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >>"${GITHUB_OUTPUT}"
+        run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >>"$GITHUB_OUTPUT"
       - name: Build Container
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: ./Dockerfile
+          file: ./docker/Dockerfile
           push: ${{ steps.meta.outputs.PUSH }}
           load: true
           tags: ${{ steps.meta.outputs.TAGS }}
           build-args: |
-            DEV_IMAGE_TAG=${{ needs.prepare.outputs.tag }}
+            DEV_IMAGE=${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}-dev:${{ steps.dev_tag.outputs.tag }}
             COMMIT_SHA=${{ github.sha }}
             BUILD_DATE=${{ steps.build_date.outputs.date }}
       - name: Run container
         run: |
-          # Start container detached
           CONTAINER_ID=$(docker run -d ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.IMAGE_NAME }}:latest)
-          echo "CONTAINER_ID=$CONTAINER_ID" >>${GITHUB_ENV}
+          echo "CONTAINER_ID=${CONTAINER_ID}" >>"${GITHUB_ENV}"
       - name: Verify logs
         run: |
-          for i in {1..10}; do
-            if docker logs ${CONTAINER_ID} 2>&1 | grep -qi "failed to load configuration"; then
+          for i in $(seq 1 10); do
+            if docker logs "${CONTAINER_ID}" 2>&1 | grep -qi "failed to load configuration"; then
               echo "Container output verified."
               exit 0
-            else
-              echo "Waiting for container to start..."
-              sleep 3
             fi
+            echo "Waiting for container to start..."
+            sleep 3
           done
           echo "Container did not start." >&2
-          docker logs ${CONTAINER_ID} >&2
+          docker logs "${CONTAINER_ID}" >&2
           exit 1
       - name: Cleanup
         if: always()
-        run: docker rm -f ${CONTAINER_ID}
+        run: docker rm -f "${CONTAINER_ID}"
