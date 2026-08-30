@@ -1,6 +1,6 @@
 {
   "name": "telegram-scout",
-  "image": "h3nc4/telegram-scout-dev:0",
+  "image": "h3nc4/telegram-scout-dev:1",
   "runArgs": [
     "--name=telegram-scout-devcontainer",
     "--network=host"
