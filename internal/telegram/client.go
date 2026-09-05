@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gotd/log/logzap"
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
@@ -158,7 +159,7 @@ func NewClient(cfg *config.Config, log *zap.Logger, msgChan chan<- model.Message
 
 	opts := telegram.Options{
 		// Reduce log noise from the library
-		Logger:         log.WithOptions(zap.IncreaseLevel(zap.WarnLevel)),
+		Logger:         logzap.New(log.WithOptions(zap.IncreaseLevel(zap.WarnLevel))),
 		SessionStorage: storage,
 		UpdateHandler:  d,
 	}
