@@ -19,6 +19,11 @@
   },
   "packageRules": [
     {
+      "description": "The dev container pin belongs to CI, not to Renovate.",
+      "matchManagers": ["devcontainer"],
+      "enabled": false
+    },
+    {
       "groupName": "go-deps",
       "matchManagers": [
         "gomod"
