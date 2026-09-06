@@ -92,7 +92,7 @@ jobs:
       - name: Prepare metadata
         id: meta
         run: |
-          image="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          image="${{ vars.DOCKERHUB_USERNAME }}/telegram-scout"
           tags="${image}:latest"
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
             tags="${tags},${image}:$(echo "${GITHUB_SHA}" | cut -c1-7)"
