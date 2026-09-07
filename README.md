@@ -2,45 +2,58 @@
 
 A headless Telegram alarm system that monitors specific channels for keywords and notifies you.
 
-## Configuration
+## Run with Docker
 
-Configuration is split between environment variables for credentials and a YAML file for configuration.
+```bash
+docker run -d \
+  --name telegram-scout \
+  --restart always \
+  -v "${PWD}/config.yaml:/app/config.yaml:ro" \
+  -e TELEGRAM_API_ID='YOUR_API_ID' \
+  -e TELEGRAM_API_HASH='YOUR_API_HASH' \
+  -e TELEGRAM_PHONE='+1234567890' \
+  -e TELEGRAM_PASSWORD='YOUR_2FA_PASSWORD' \
+  -e TELEGRAM_SESSION='{"version":1,"data":...}' \
+  -e TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN' \
+  -e TELEGRAM_CHAT_ID='YOUR_CHAT_ID' \
+  h3nc4/telegram-scout
+```
 
-### Env Vars
+That command needs a `config.yaml` naming the chats and keywords to watch, plus a
+`TELEGRAM_SESSION` value. The session matters because a container has no way to prompt you for
+the login code Telegram sends.
 
-| Variable             | Description                                              | Required |
-| -------------------- | -------------------------------------------------------- | -------- |
-| `TELEGRAM_PHONE`     | Phone number with country code (e.g., `+1234567890`)     | Yes      |
-| `TELEGRAM_PASSWORD`  | Cloud password (2FA) if enabled                          | No*      |
-| `TELEGRAM_API_ID`    | App ID from [my.telegram.org](https://my.telegram.org)   | Yes      |
-| `TELEGRAM_API_HASH`  | App Hash from [my.telegram.org](https://my.telegram.org) | Yes      |
-| `TELEGRAM_BOT_TOKEN` | Token from [@BotFather](https://t.me/BotFather)          | Yes      |
-| `TELEGRAM_CHAT_ID`   | User or Group ID to receive alerts                       | Yes      |
-| `TELEGRAM_SESSION`   | JSON session string                                      | No*      |
+Setting both up is one-time work. Go through the sections below in order and you will end up with
+every value the command above expects.
 
-*\* `TELEGRAM_SESSION` is required for headless/Docker operation. `TELEGRAM_PASSWORD` is required if 2FA is enabled.*
+1. [API credentials](#api-credentials)
+2. [Bot token and chat id](#bot-token-and-chat-id)
+3. [Session string](#session-string)
+4. [config.yaml](#configyaml)
 
-### Setting up API Credentials
+## API credentials
 
-1. Go to [my.telegram.org](https://my.telegram.org) and log in with your phone number.
-2. Navigate to "API Development Tools".
-3. Create a new application and note down the `API ID` and `API Hash`.
-4. Set `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
+1. Log in at [my.telegram.org](https://my.telegram.org) with your phone number.
+2. Open "API Development Tools".
+3. Create an application and keep the `API ID` and `API Hash` it shows you.
 
-### Setting up the Bot & Chat ID
+Those two values are `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
 
-1. Create Bot: Talk to [@BotFather](https://t.me/BotFather), create a new bot, and copy the Token.
-2. Start Chat: Open your new bot in Telegram and click Start.
-3. Get Chat ID: Send any message to [@userinfobot](https://t.me/userinfobot). It will reply with your numeric Id.
-4. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+## Bot token and chat id
 
-### Session Generation
+1. Talk to [@BotFather](https://t.me/BotFather) and create a new bot. Copy the token it hands back.
+2. Open your new bot in Telegram and press Start.
+3. Send any message to [@userinfobot](https://t.me/userinfobot). It replies with your numeric id.
 
-TelegramScout requires a valid session to run headlessly. Since you cannot interact with the Docker container to enter a login code, you must generate this session locally first.
+Those two values are `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
 
-Ideally, create a .env file with your credentials for easy management.
+## Session string
 
-To generate the session file, run the following commands:
+Telegram signs you in with a code sent to your app, so the first login cannot happen inside a
+container. Generate the session on your own machine, then pass the result in as an environment
+variable.
+
+A `.env` file makes the credentials easier to manage here, though it is not required.
 
 ```bash
 touch session.json
@@ -56,15 +69,12 @@ docker run \
   --rm -it h3nc4/telegram-scout
 ```
 
-Then, follow the prompts to login using the code sent to your Telegram app.
+Follow the prompts and enter the code Telegram sends you. On success `session.json` holds your
+session data, and its contents are the value of `TELEGRAM_SESSION`.
 
-On success, the `session.json` file will be populated with your session data.
+## config.yaml
 
-Finally, copy its contents and use them as the `TELEGRAM_SESSION` environment variable for running headlessly.
-
-### YAML Config
-
-Define the monitoring rules and performance tuning parameters.
+Define the chats to watch and the keywords that raise an alert.
 
 ```yaml
 chats: # List of chat usernames or IDs to monitor
@@ -84,32 +94,26 @@ keywords: # Keywords to trigger alerts (case-insensitive)
   - "re:\$\d{3,}"             # Matches prices
 ```
 
-## Deployment
+## Environment variables
 
-### Docker
+Credentials come from the environment. The monitoring rules come from `config.yaml`.
 
-If you have not generated a session yet, follow the [Session Generation](#session-generation) steps first.
+| Variable             | Description                                              | Required |
+| -------------------- | -------------------------------------------------------- | -------- |
+| `TELEGRAM_PHONE`     | Phone number with country code (e.g., `+1234567890`)     | Yes      |
+| `TELEGRAM_PASSWORD`  | Cloud password (2FA) if enabled                          | No*      |
+| `TELEGRAM_API_ID`    | App ID from [my.telegram.org](https://my.telegram.org)   | Yes      |
+| `TELEGRAM_API_HASH`  | App Hash from [my.telegram.org](https://my.telegram.org) | Yes      |
+| `TELEGRAM_BOT_TOKEN` | Token from [@BotFather](https://t.me/BotFather)          | Yes      |
+| `TELEGRAM_CHAT_ID`   | User or Group ID to receive alerts                       | Yes      |
+| `TELEGRAM_SESSION`   | JSON session string                                      | No*      |
 
-Run the container with your configuration file and environment variables:
+*\* `TELEGRAM_SESSION` is required for headless/Docker operation. `TELEGRAM_PASSWORD` is required if 2FA is enabled.*
 
-```bash
-docker run -d \
-  --name telegram-scout \
-  --restart always \
-  -v "${PWD}/config.yaml:/app/config.yaml:ro" \
-  -e TELEGRAM_API_ID='YOUR_API_ID' \
-  -e TELEGRAM_API_HASH='YOUR_API_HASH' \
-  -e TELEGRAM_PHONE='+1234567890' \
-  -e TELEGRAM_PASSWORD='YOUR_2FA_PASSWORD' \
-  -e TELEGRAM_SESSION='{"version":1,"data":...}' \
-  -e TELEGRAM_BOT_TOKEN='YOUR_BOT_TOKEN' \
-  -e TELEGRAM_CHAT_ID='YOUR_CHAT_ID' \
-  h3nc4/telegram-scout
-```
+## Running without Docker
 
-### Manual
-
-If you prefer to run TelegramScout manually, ensure you have Go installed and set up or enter this repo's Dev Container.
+You still need the values from the sections above. Make sure you have Go installed, or enter this
+repository's Dev Container.
 
 ```bash
 # Install dependencies
