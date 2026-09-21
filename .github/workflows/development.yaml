@@ -107,6 +107,8 @@ jobs:
     steps:
       - name: Run actions/checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # dev-image diffs against the base to spot image changes
       - name: Prepare metadata
         id: meta
         run: |
@@ -121,8 +123,14 @@ jobs:
             echo "TAGS=${tags}"
             echo "DEV_IMAGE=$(scripts/devcontainer-image.sh)"
           } >>"$GITHUB_OUTPUT"
+      - name: Run h3nc4/dev-image-action
+        uses: h3nc4/dev-image-action@1e296b26a16b3e20db153e32b963d953a41ef1a1 # v2
+      - name: Name the resolved image as the Dockerfile expects
+        run: docker tag "${DEV_IMAGE:?}" "${{ steps.meta.outputs.DEV_IMAGE }}"
       - name: Run docker/setup-buildx-action
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        with:
+          driver: docker
       - name: Run docker/login-action
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
