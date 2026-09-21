@@ -20,7 +20,7 @@
     "DEVCONTAINER": "1",
     "TERM": "${env:TERM}",
     "TMUX": "${env:TMUX}",
-    "TELEGRAMSCOUT_HOST_ROOT": "${localWorkspaceFolder}"
+    "HOST_ROOT": "${localWorkspaceFolder}"
   },
   "userEnvProbe": "interactiveShell",
   "customizations": {
