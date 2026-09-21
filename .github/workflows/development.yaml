@@ -9,6 +9,9 @@ on:
     branches:
       - "main"
       - "release/*"
+  schedule:
+    - cron: "0 7 * * *" # Daily at 07:00 UTC
+  workflow_dispatch:
 
 env:
   DEV_DOCKER_ARGS: -v ${HOME:?}/ci-cache/go-mod:/cache/go-mod -v ${HOME:?}/ci-cache/go-build:/cache/go-build -e GOMODCACHE=/cache/go-mod -e GOCACHE=/cache/go-build
@@ -80,7 +83,22 @@ jobs:
         with:
           name: code-coverage
       - name: Run SonarQube analysis
-        run: ./scripts/sonar.sh
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Only main writes the official project. Everything else gets a throwaway.
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            SONAR_PROJECT_KEY="telegram-scout-pr-${PR_NUMBER:?}" ./scripts/sonar.sh -d
+          elif [ "${REF_NAME}" = "main" ]; then
+            ./scripts/sonar.sh
+          else
+            key="telegram-scout-ref-$(printf '%s' "${REF_NAME:?}" | tr -c 'A-Za-z0-9._-' '-')"
+            SONAR_PROJECT_KEY="${key}" ./scripts/sonar.sh -d
+          fi
 
   build-test-container:
     name: Build and Test Runtime Container
@@ -94,11 +112,11 @@ jobs:
         run: |
           image="${{ vars.DOCKERHUB_USERNAME }}/telegram-scout"
           tags="${image}:latest"
-          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
             tags="${tags},${image}:$(echo "${GITHUB_SHA}" | cut -c1-7)"
           fi
           {
-            echo "PUSH=${{ github.ref == 'refs/heads/main' }}"
+            echo "PUSH=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
             echo "IMAGE=${image}"
             echo "TAGS=${tags}"
             echo "DEV_IMAGE=$(scripts/devcontainer-image.sh)"
@@ -106,7 +124,7 @@ jobs:
       - name: Run docker/setup-buildx-action
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Run docker/login-action
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
