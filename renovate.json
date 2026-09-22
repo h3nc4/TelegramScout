@@ -9,6 +9,9 @@
   "assignAutomerge": true,
   "prConcurrentLimit": 0,
   "prHourlyLimit": 0,
+  "gitIgnoredAuthors": [
+    "41898282+github-actions[bot]@users.noreply.github.com"
+  ],
   "lockFileMaintenance": {
     "enabled": true,
     "addLabels": ["automerge"],
