@@ -1,12 +1,12 @@
 {
   "name": "telegram-scout",
-  "image": "h3nc4/telegram-scout-dev:3",
+  "image": "h3nc4/telegram-scout-dev:4",
   "initializeCommand": "${localWorkspaceFolder}/scripts/devcontainer-init.sh",
   "runArgs": [
     "--name=telegram-scout-devcontainer",
     "--network=host"
   ],
-  "remoteUser": "telegram-scout",
+  "remoteUser": "dev",
   "workspaceFolder": "/workspaces/telegram-scout",
   "overrideCommand": false,
   "mounts": [

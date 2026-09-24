@@ -71,17 +71,6 @@
   ],
   "customManagers": [
     {
-      "description": "Update Docker images in sonar script",
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^scripts/sonar\\.sh$/"
-      ],
-      "matchStrings": [
-        "_image=\"(?<depName>.*?):(?<currentValue>.*?)\""
-      ],
-      "datasourceTemplate": "docker"
-    },
-    {
       "description": "Update Go version in CI/Dev Dockerfiles",
       "customType": "regex",
       "managerFilePatterns": [
