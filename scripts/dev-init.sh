@@ -16,30 +16,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with TelegramScout.  If not, see <https://www.gnu.org/licenses/>.
 
-# Helper script to update user UID/GID and re-execute caller as that user
-# Usage: switch-user.sh <username> <target_uid> <target_gid> <script> [args...]
-
+# What this repository needs past the shared setup dev-base does.
 set -e
 
-username="$1"
-target_uid="$2"
-target_gid="$3"
-shift 3
-
-# Update GID
-current_gid=$(id -g "${username}")
-if [ "${target_gid}" != "${current_gid}" ]; then
-  echo "Updating ${username} GID to ${target_gid}..."
-  groupmod -o -g "${target_gid}" "${username}"
+if [ -f go.mod ]; then
+  echo "Downloading Go modules..."
+  go mod download
 fi
-
-# Update UID
-current_uid=$(id -u "${username}")
-if [ "${target_uid}" != "${current_uid}" ]; then
-  echo "Updating ${username} UID to ${target_uid}..."
-  usermod -o -u "${target_uid}" "${username}"
-fi
-
-# Re-execute as the updated user
-echo "Re-executing as ${username} (UID:GID = ${target_uid}:${target_gid})..."
-exec gosu "${username}" /bin/sh "$@"
