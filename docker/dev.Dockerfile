@@ -33,7 +33,7 @@ ARG GOPATH="/home/${USER}/go"
 
 ################################################################################
 # Go stage
-FROM debian:13@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1 AS go-stage
+FROM debian:13-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS go-stage
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
   gnupg
@@ -59,7 +59,7 @@ FROM golangci/golangci-lint:v2.14@sha256:ad862ba6b3798cbe0fd9fd7408d498fd74fbd26
 
 ################################################################################
 # Debian main stage
-FROM h3nc4/dev-base:debian-13@sha256:7e16158a6bc18e5dc393f373a00521a0109d0b1ce0150ad6f949e416ce1a051f AS main
+FROM h3nc4/dev-base:debian-13@sha256:882dbbaafb92a2b366b54dbed2aca6b2531f01fb89095b5b7889cd930ad68ec2 AS main
 
 # dev-base ends as the dev user, and the steps below need root.
 USER root
