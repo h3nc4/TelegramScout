@@ -53,6 +53,10 @@ type Scout struct {
 
 	// Semaphore to limit concurrent notification requests
 	notifySem chan struct{}
+
+	// How often the dedup cache is swept. A field so a test can ask for a
+	// sweep without waiting the production interval out.
+	cleanupEvery time.Duration
 }
 
 // Create a new Scout instance and compiles matching rules
@@ -62,7 +66,8 @@ func New(cfg *config.Config, notifier notifier.Notifier, log *zap.Logger) *Scout
 		notifier: notifier,
 		log:      log,
 		// Limit concurrent notifications
-		notifySem: make(chan struct{}, 5),
+		notifySem:    make(chan struct{}, 5),
+		cleanupEvery: 10 * time.Minute,
 	}
 	s.compileRules()
 	return s
@@ -214,7 +219,7 @@ func (s *Scout) process(ctx context.Context, msg model.Message) {
 
 // Remove old entries from deduplication map
 func (s *Scout) cleanupCache(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(s.cleanupEvery)
 	defer ticker.Stop()
 
 	for {
@@ -222,16 +227,21 @@ func (s *Scout) cleanupCache(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			now := time.Now()
-			s.seenMsgs.Range(func(key, value interface{}) bool {
-				expiry := value.(time.Time)
-				if now.After(expiry) {
-					s.seenMsgs.Delete(key)
-				}
-				return true
-			})
+			s.sweepExpired(time.Now())
 		}
 	}
+}
+
+// Drop every entry that expired before now. Separate from the ticker so the
+// rule can be checked without waiting ten minutes for one.
+func (s *Scout) sweepExpired(now time.Time) {
+	s.seenMsgs.Range(func(key, value interface{}) bool {
+		expiry := value.(time.Time)
+		if now.After(expiry) {
+			s.seenMsgs.Delete(key)
+		}
+		return true
+	})
 }
 
 func truncate(s string, max int) string {

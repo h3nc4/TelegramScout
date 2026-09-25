@@ -21,8 +21,11 @@ package telegram
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/gotd/td/tg"
 )
 
 func TestTerminalAuthenticator(t *testing.T) {
@@ -97,4 +100,88 @@ func TestTerminalAuthenticator(t *testing.T) {
 			t.Error("expected error for SignUp, got nil")
 		}
 	})
+
+	t.Run("Terms Are Accepted", func(t *testing.T) {
+		auth := &terminalAuthenticator{}
+		if err := auth.AcceptTermsOfService(ctx, tg.HelpTermsOfService{}); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	// A closed stdin reaches Fscanln as EOF, which is what a login in a
+	// container with no terminal attached does.
+	t.Run("Password Without Input", func(t *testing.T) {
+		var output bytes.Buffer
+		auth := &terminalAuthenticator{
+			reader: strings.NewReader(""),
+			writer: &output,
+		}
+		if _, err := auth.Password(ctx); err == nil {
+			t.Error("expected an error when nothing can be read")
+		}
+	})
+
+	t.Run("Code Without Input", func(t *testing.T) {
+		var output bytes.Buffer
+		auth := &terminalAuthenticator{
+			reader: strings.NewReader(""),
+			writer: &output,
+		}
+		if _, err := auth.Code(ctx, nil); err == nil {
+			t.Error("expected an error when nothing can be read")
+		}
+	})
+
+	t.Run("Password With A Failing Writer", func(t *testing.T) {
+		auth := &terminalAuthenticator{
+			reader: strings.NewReader("pass\n"),
+			writer: &flakyWriter{},
+		}
+		if _, err := auth.Password(ctx); err == nil {
+			t.Error("expected the write error to surface")
+		}
+	})
+
+	t.Run("Code With A Failing Writer", func(t *testing.T) {
+		auth := &terminalAuthenticator{
+			reader: strings.NewReader("123\n"),
+			writer: &flakyWriter{},
+		}
+		if _, err := auth.Code(ctx, nil); err == nil {
+			t.Error("expected the write error to surface")
+		}
+	})
+
+	// Each prompt is two writes, an explanation and the prompt itself, so a
+	// terminal that dies between them has to surface too.
+	t.Run("Password With A Writer That Dies On The Prompt", func(t *testing.T) {
+		auth := &terminalAuthenticator{
+			reader: strings.NewReader("pass\n"),
+			writer: &flakyWriter{ok: 1},
+		}
+		if _, err := auth.Password(ctx); err == nil {
+			t.Error("expected the second write error to surface")
+		}
+	})
+
+	t.Run("Code With A Writer That Dies On The Prompt", func(t *testing.T) {
+		auth := &terminalAuthenticator{
+			reader: strings.NewReader("123\n"),
+			writer: &flakyWriter{ok: 1},
+		}
+		if _, err := auth.Code(ctx, nil); err == nil {
+			t.Error("expected the second write error to surface")
+		}
+	})
+}
+
+// Accept ok writes, then fail every one after them.
+type flakyWriter struct{ ok int }
+
+func (w *flakyWriter) Write(p []byte) (int, error) {
+	if w.ok > 0 {
+		w.ok--
+		return len(p), nil
+	}
+	return 0, errors.New("prompt could not be written")
 }
