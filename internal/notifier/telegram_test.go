@@ -21,10 +21,13 @@ package notifier
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -86,6 +89,7 @@ func TestTelegramNotifier_Send(t *testing.T) {
 
 		n := New(cfg, log)
 		n.baseURL = server.URL
+		n.backoff = time.Millisecond
 
 		if err := n.Send(context.Background(), "RetryMe"); err != nil {
 			t.Errorf("expected success after retry, got error: %v", err)
@@ -103,9 +107,122 @@ func TestTelegramNotifier_Send(t *testing.T) {
 
 		n := New(cfg, log)
 		n.baseURL = server.URL
+		n.backoff = time.Millisecond
 
 		if err := n.Send(context.Background(), "FailMe"); err == nil {
 			t.Error("expected error after max retries, got nil")
+		}
+	})
+
+	// Telegram answers 429 with the wait in a header, and the API is free to
+	// leave it out, in which case the message reports the fallback.
+	t.Run("Rate limited with a Retry-After header", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Retry-After", "3")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		defer server.Close()
+
+		n := New(cfg, log)
+		n.baseURL = server.URL
+		n.backoff = time.Millisecond
+
+		err := n.Send(context.Background(), "TooFast")
+		if err == nil {
+			t.Fatal("expected an error, got nil")
+		}
+		if !strings.Contains(err.Error(), "retry after 3 seconds") {
+			t.Errorf("expected the header value in the error, got %v", err)
+		}
+	})
+
+	t.Run("Rate limited without a Retry-After header", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		defer server.Close()
+
+		n := New(cfg, log)
+		n.baseURL = server.URL
+		n.backoff = time.Millisecond
+
+		err := n.Send(context.Background(), "TooFast")
+		if err == nil {
+			t.Fatal("expected an error, got nil")
+		}
+		if !strings.Contains(err.Error(), "retry after 5 seconds") {
+			t.Errorf("expected the fallback wait in the error, got %v", err)
+		}
+	})
+
+	t.Run("Network error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		url := server.URL
+		// Closed before the send, so the port answers nothing.
+		server.Close()
+
+		n := New(cfg, log)
+		n.baseURL = url
+		n.backoff = time.Millisecond
+
+		err := n.Send(context.Background(), "Nobody home")
+		if err == nil {
+			t.Fatal("expected an error, got nil")
+		}
+		if !strings.Contains(err.Error(), "network error") {
+			t.Errorf("expected a network error, got %v", err)
+		}
+	})
+
+	t.Run("Unusable URL", func(t *testing.T) {
+		n := New(cfg, log)
+		// A control character, which url.Parse refuses.
+		n.baseURL = "http://127.0.0.1\x7f"
+		n.backoff = time.Millisecond
+
+		err := n.Send(context.Background(), "Nowhere")
+		if err == nil {
+			t.Fatal("expected an error, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to create request") {
+			t.Errorf("expected a request construction error, got %v", err)
+		}
+	})
+
+	t.Run("Context cancelled before the first attempt", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("expected no request once the context is cancelled")
+		}))
+		defer server.Close()
+
+		n := New(cfg, log)
+		n.baseURL = server.URL
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		if err := n.Send(ctx, "Too late"); !errors.Is(err, context.Canceled) {
+			t.Errorf("expected context.Canceled, got %v", err)
+		}
+	})
+
+	t.Run("Context cancelled during the backoff", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// The attempt fails and the context is gone before the wait ends.
+			cancel()
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer server.Close()
+
+		n := New(cfg, log)
+		n.baseURL = server.URL
+		n.backoff = 10 * time.Second
+
+		if err := n.Send(ctx, "Give up"); !errors.Is(err, context.Canceled) {
+			t.Errorf("expected context.Canceled, got %v", err)
 		}
 	})
 }

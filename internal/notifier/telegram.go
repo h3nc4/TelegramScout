@@ -37,6 +37,14 @@ type Notifier interface {
 	Send(ctx context.Context, message string) error
 }
 
+// Body of a sendMessage call, as a type so the encoder does the quoting
+type sendMessage struct {
+	ChatID                int64  `json:"chat_id"`
+	Text                  string `json:"text"`
+	ParseMode             string `json:"parse_mode"`
+	DisableWebPagePreview bool   `json:"disable_web_page_preview"`
+}
+
 // Send messages using the Telegram Bot API
 type TelegramNotifier struct {
 	client  *http.Client
@@ -44,6 +52,10 @@ type TelegramNotifier struct {
 	token   string
 	chatID  int64
 	baseURL string
+
+	// First backoff step, doubled on each retry. A field so a test can drive
+	// the retry loop without sleeping seconds between attempts.
+	backoff time.Duration
 }
 
 // Create new TelegramNotifier
@@ -56,6 +68,7 @@ func New(cfg *config.Config, log *zap.Logger) *TelegramNotifier {
 		token:   cfg.BotToken,
 		chatID:  cfg.ChatID,
 		baseURL: "https://api.telegram.org",
+		backoff: time.Second,
 	}
 }
 
@@ -63,17 +76,14 @@ func New(cfg *config.Config, log *zap.Logger) *TelegramNotifier {
 func (t *TelegramNotifier) Send(ctx context.Context, message string) error {
 	url := fmt.Sprintf("%s/bot%s/sendMessage", t.baseURL, t.token)
 
-	payload := map[string]interface{}{
-		"chat_id":                  t.chatID,
-		"text":                     message,
-		"parse_mode":               "HTML",
-		"disable_web_page_preview": true,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
-	}
+	// Marshalling these four fields cannot fail, so the error is dropped rather
+	// than kept as a branch no test can reach.
+	body, _ := json.Marshal(sendMessage{
+		ChatID:                t.chatID,
+		Text:                  message,
+		ParseMode:             "HTML",
+		DisableWebPagePreview: true,
+	})
 
 	const maxRetries = 3
 	var lastErr error
@@ -99,7 +109,7 @@ func (t *TelegramNotifier) Send(ctx context.Context, message string) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(time.Duration(1<<i) * time.Second):
+		case <-time.After(time.Duration(1<<i) * t.backoff):
 			continue
 		}
 	}
