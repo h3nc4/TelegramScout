@@ -31,9 +31,20 @@ ARG UID="1000"
 ARG GID="1000"
 ARG GOPATH="/home/${USER}/go"
 
+# A caching mirror on the network this is built on, so a package is fetched from
+# the internet once rather than once per build. Empty by default, which is what
+# CI uses: its runners have no route to a LAN mirror and go straight to Debian.
+ARG APT_MIRROR=""
+
 ################################################################################
 # Go stage
 FROM debian:13-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS go-stage
+
+ARG APT_MIRROR
+RUN if [ -n "${APT_MIRROR}" ]; then \
+    sed -i "s|http://deb.debian.org|${APT_MIRROR}|g" \
+      /etc/apt/sources.list.d/debian.sources; \
+  fi
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
   gnupg
@@ -70,6 +81,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 ########################################
 # What cgo needs to link, which dev-base does not carry
+ARG APT_MIRROR
+RUN if [ -n "${APT_MIRROR}" ]; then \
+    sed -i "s|http://deb.debian.org|${APT_MIRROR}|g" \
+      /etc/apt/sources.list.d/debian.sources; \
+  fi
+
 RUN apt-get update -qq && apt-get install --no-install-recommends -y -qq \
   build-essential
 
@@ -80,7 +97,11 @@ COPY --from=golangci-lint-stage /usr/bin/golangci-lint /usr/local/bin/golangci-l
 
 ########################################
 # Clean cache
-RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get clean && rm -rf /var/lib/apt/lists/* && \
+  if [ -n "${APT_MIRROR}" ]; then \
+    sed -i "s|${APT_MIRROR}|http://deb.debian.org|g" \
+      /etc/apt/sources.list.d/debian.sources; \
+  fi
 RUN rm -rf /var/cache/* /var/log/* /tmp/*
 
 ################################################################################

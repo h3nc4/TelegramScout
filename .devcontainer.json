@@ -1,6 +1,6 @@
 {
   "name": "telegram-scout",
-  "image": "h3nc4/telegram-scout-dev:6",
+  "image": "h3nc4/telegram-scout-dev:7",
   "initializeCommand": "${localWorkspaceFolder}/scripts/devcontainer-init.sh",
   "runArgs": [
     "--name=telegram-scout-devcontainer",
