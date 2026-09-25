@@ -20,6 +20,8 @@ package main
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,16 +32,39 @@ import (
 	"github.com/h3nc4/TelegramScout/internal/scout"
 )
 
-// Implement notifier.Notifier for testing
+// Implement notifier.Notifier for testing. The scout dispatches a send on its
+// own goroutine, so every field here is read under the mutex or after Sent.
 type MockNotifier struct {
-	LastMessage string
-	CallCount   int
+	mu          sync.Mutex
+	lastMessage string
+	callCount   int
+
+	// Receives each alert, so a test waits for the send rather than for a clock
+	Sent chan string
 }
 
 func (m *MockNotifier) Send(ctx context.Context, message string) error {
-	m.LastMessage = message
-	m.CallCount++
+	m.mu.Lock()
+	m.lastMessage = message
+	m.callCount++
+	m.mu.Unlock()
+
+	if m.Sent != nil {
+		m.Sent <- message
+	}
 	return nil
+}
+
+func (m *MockNotifier) Calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.callCount
+}
+
+func (m *MockNotifier) LastMessage() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastMessage
 }
 
 // Integration-like test for the wiring of components
@@ -52,7 +77,7 @@ func TestWiring(t *testing.T) {
 		},
 	}
 
-	notif := &MockNotifier{}
+	notif := &MockNotifier{Sent: make(chan string, 1)}
 	s := scout.New(cfg, notif, log)
 	msgChan := make(chan model.Message, 10)
 
@@ -71,10 +96,16 @@ func TestWiring(t *testing.T) {
 		Date:      time.Now(),
 	}
 
-	// Allow time for processing
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-notif.Sent:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for the alert to reach the notifier")
+	}
 
-	if notif.CallCount != 1 {
-		t.Errorf("expected 1 notification, got %d", notif.CallCount)
+	if got := notif.Calls(); got != 1 {
+		t.Errorf("expected 1 notification, got %d", got)
+	}
+	if msg := notif.LastMessage(); !strings.Contains(msg, "alert") {
+		t.Errorf("alert names no matched keyword: %q", msg)
 	}
 }
