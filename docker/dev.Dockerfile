@@ -42,7 +42,7 @@ FROM debian:13-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77
 ARG APT_MIRROR
 RUN host="${APT_MIRROR#http://}"; \
   if [ -n "${host}" ] && getent hosts "${host}" >/dev/null 2>&1; then \
-    sed -i "s|^URIs: http://deb.debian.org/\(.*\)$|URIs: ${APT_MIRROR}/\1 http://deb.debian.org/\1|" \
+    sed -i "s|^URIs: http://deb.debian.org/|URIs: ${APT_MIRROR}/|" \
       /etc/apt/sources.list.d/debian.sources; \
   fi
 
@@ -84,7 +84,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ARG APT_MIRROR
 RUN host="${APT_MIRROR#http://}"; \
   if [ -n "${host}" ] && getent hosts "${host}" >/dev/null 2>&1; then \
-    sed -i "s|^URIs: http://deb.debian.org/\(.*\)$|URIs: ${APT_MIRROR}/\1 http://deb.debian.org/\1|" \
+    sed -i "s|^URIs: http://deb.debian.org/|URIs: ${APT_MIRROR}/|" \
       /etc/apt/sources.list.d/debian.sources; \
   fi
 
@@ -100,7 +100,7 @@ COPY --from=golangci-lint-stage /usr/bin/golangci-lint /usr/local/bin/golangci-l
 # Clean cache
 RUN apt-get clean && rm -rf /var/lib/apt/lists/* && \
   if [ -n "${APT_MIRROR}" ]; then \
-    sed -i "s|${APT_MIRROR}/[^ ]* ||" \
+    sed -i "s|^URIs: ${APT_MIRROR}/|URIs: http://deb.debian.org/|" \
       /etc/apt/sources.list.d/debian.sources; \
   fi
 RUN rm -rf /var/cache/* /var/log/* /tmp/*
