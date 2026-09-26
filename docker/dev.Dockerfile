@@ -31,18 +31,18 @@ ARG UID="1000"
 ARG GID="1000"
 ARG GOPATH="/home/${USER}/go"
 
-# A caching mirror on the network this is built on, so a package is fetched from
-# the internet once rather than once per build. Empty by default, which is what
-# CI uses: its runners have no route to a LAN mirror and go straight to Debian.
-ARG APT_MIRROR=""
+# The package mirror to build through. It answers on one network only, so
+# resolving the name is the test for reaching it.
+ARG APT_MIRROR="http://debian.lan.h3nc4.com"
 
 ################################################################################
 # Go stage
 FROM debian:13-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS go-stage
 
 ARG APT_MIRROR
-RUN if [ -n "${APT_MIRROR}" ]; then \
-    sed -i "s|http://deb.debian.org|${APT_MIRROR}|g" \
+RUN host="${APT_MIRROR#http://}"; \
+  if [ -n "${host}" ] && getent hosts "${host}" >/dev/null 2>&1; then \
+    sed -i "s|^URIs: http://deb.debian.org/\(.*\)$|URIs: ${APT_MIRROR}/\1 http://deb.debian.org/\1|" \
       /etc/apt/sources.list.d/debian.sources; \
   fi
 
@@ -70,7 +70,7 @@ FROM golangci/golangci-lint:v2.14@sha256:ad862ba6b3798cbe0fd9fd7408d498fd74fbd26
 
 ################################################################################
 # Debian main stage
-FROM h3nc4/dev-base:debian-13@sha256:882dbbaafb92a2b366b54dbed2aca6b2531f01fb89095b5b7889cd930ad68ec2 AS main
+FROM h3nc4/dev-base:debian-13@sha256:1d854408035d42667be8b3b46e166f30b0ca41dff1583c1f04234f9d39e2ebaa AS main
 
 # dev-base ends as the dev user, and the steps below need root.
 USER root
@@ -82,8 +82,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 ########################################
 # What cgo needs to link, which dev-base does not carry
 ARG APT_MIRROR
-RUN if [ -n "${APT_MIRROR}" ]; then \
-    sed -i "s|http://deb.debian.org|${APT_MIRROR}|g" \
+RUN host="${APT_MIRROR#http://}"; \
+  if [ -n "${host}" ] && getent hosts "${host}" >/dev/null 2>&1; then \
+    sed -i "s|^URIs: http://deb.debian.org/\(.*\)$|URIs: ${APT_MIRROR}/\1 http://deb.debian.org/\1|" \
       /etc/apt/sources.list.d/debian.sources; \
   fi
 
@@ -99,7 +100,7 @@ COPY --from=golangci-lint-stage /usr/bin/golangci-lint /usr/local/bin/golangci-l
 # Clean cache
 RUN apt-get clean && rm -rf /var/lib/apt/lists/* && \
   if [ -n "${APT_MIRROR}" ]; then \
-    sed -i "s|${APT_MIRROR}|http://deb.debian.org|g" \
+    sed -i "s|${APT_MIRROR}/[^ ]* ||" \
       /etc/apt/sources.list.d/debian.sources; \
   fi
 RUN rm -rf /var/cache/* /var/log/* /tmp/*
