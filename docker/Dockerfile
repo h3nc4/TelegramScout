@@ -19,7 +19,7 @@
 
 ################################################################################
 # Build stage
-ARG DEV_IMAGE="h3nc4/telegram-scout-dev:5@sha256:64a3c33b70c7de5ad2034ea58a83a9b861683e638529528e3ca9dc650ae33d73"
+ARG DEV_IMAGE="h3nc4/telegram-scout-dev:10@sha256:f7f8c3a445a97f5002804c79a1fffdb5ba4d41d892daf907889099e8154abe0e"
 
 FROM ${DEV_IMAGE} AS builder
 
