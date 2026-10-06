@@ -37,7 +37,7 @@ ARG APT_MIRROR="http://debian.lan.h3nc4.com"
 
 ################################################################################
 # Go stage
-FROM debian:13-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS go-stage
+FROM debian:13-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS go-stage
 
 ARG APT_MIRROR
 RUN host="${APT_MIRROR#http://}"; \
