@@ -244,9 +244,9 @@ func (s *Scout) sweepExpired(now time.Time) {
 	})
 }
 
-func truncate(s string, max int) string {
-	if len(s) > max {
-		return s[:max] + "..."
+func truncate(s string, limit int) string {
+	if len(s) > limit {
+		return s[:limit] + "..."
 	}
 	return s
 }
