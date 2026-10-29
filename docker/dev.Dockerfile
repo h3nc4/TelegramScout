@@ -37,7 +37,7 @@ ARG APT_MIRROR="http://debian.lan.h3nc4.com"
 
 ################################################################################
 # Go stage
-FROM debian:13-slim@sha256:89c1ea91e897f0fe0a3731595330bc45b8bdef4047464a07116f891a94054b31 AS go-stage
+FROM debian:13-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS go-stage
 
 ARG APT_MIRROR
 RUN host="${APT_MIRROR#http://}"; \
@@ -70,7 +70,7 @@ FROM golangci/golangci-lint:v2.15@sha256:fbfcfd12a6f8d7f1b97b3362ca80fc2a244d468
 
 ################################################################################
 # Debian main stage
-FROM h3nc4/dev-base:debian-13@sha256:c78e86da85254b1d6f9278ddec16e0d8f9ebe008101b25182b7f8829df35548a AS main
+FROM h3nc4/dev-base:debian-13@sha256:b522d15b6392a13055b5d077844447740d943b1cee84bde345d6e2dcc9739c75 AS main
 
 # dev-base ends as the dev user, and the steps below need root.
 USER root
