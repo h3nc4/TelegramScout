@@ -23,17 +23,34 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  checks:
-    name: Lint, test and build
+  dev-image:
+    name: Resolve dev image
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.dev.outputs.image }}
+      artifact: ${{ steps.dev.outputs.artifact }}
     steps:
       - name: Run actions/checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0 # dev-image diffs against the base to spot image changes
+      - name: Run h3nc4/dev-image-action/share
+        id: dev
+        uses: h3nc4/dev-image-action/share@24e5d67fa210ea49d6ef24c07d7f8f536fe1bb7b # v3
+
+  checks:
+    name: Lint, test and build
+    needs: [dev-image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run actions/checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Run h3nc4/dev-image-action
-        uses: h3nc4/dev-image-action@1e296b26a16b3e20db153e32b963d953a41ef1a1 # v2
+        uses: h3nc4/dev-image-action@24e5d67fa210ea49d6ef24c07d7f8f536fe1bb7b # v3
         with:
+          image: ${{ needs.dev-image.outputs.image }}
+          artifact: ${{ needs.dev-image.outputs.artifact }}
+          base-sha: ""
           docker-args: ${{ env.DEV_DOCKER_ARGS }}
       - name: Run actions/cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -102,13 +119,11 @@ jobs:
 
   build-test-container:
     name: Build and Test Runtime Container
-    needs: [checks]
+    needs: [dev-image, checks]
     runs-on: ubuntu-latest
     steps:
       - name: Run actions/checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0 # dev-image diffs against the base to spot image changes
       - name: Prepare metadata
         id: meta
         run: |
@@ -124,7 +139,11 @@ jobs:
             echo "DEV_IMAGE=$(scripts/devcontainer-image.sh)"
           } >>"$GITHUB_OUTPUT"
       - name: Run h3nc4/dev-image-action
-        uses: h3nc4/dev-image-action@1e296b26a16b3e20db153e32b963d953a41ef1a1 # v2
+        uses: h3nc4/dev-image-action@24e5d67fa210ea49d6ef24c07d7f8f536fe1bb7b # v3
+        with:
+          image: ${{ needs.dev-image.outputs.image }}
+          artifact: ${{ needs.dev-image.outputs.artifact }}
+          base-sha: ""
       - name: Name the resolved image as the Dockerfile expects
         run: docker tag "${DEV_IMAGE:?}" "${{ steps.meta.outputs.DEV_IMAGE }}"
       - name: Run docker/setup-buildx-action
@@ -174,3 +193,16 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rm -f "${CONTAINER_ID}"
+
+  dev-image-cleanup:
+    name: Delete dev image artifact
+    needs: [dev-image, checks, build-test-container]
+    if: always() && needs.dev-image.outputs.artifact != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Run h3nc4/dev-image-action/cleanup
+        uses: h3nc4/dev-image-action/cleanup@24e5d67fa210ea49d6ef24c07d7f8f536fe1bb7b # v3
+        with:
+          artifact: ${{ needs.dev-image.outputs.artifact }}
