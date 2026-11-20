@@ -129,9 +129,6 @@ jobs:
         run: |
           image="${{ vars.DOCKERHUB_USERNAME }}/telegram-scout"
           tags="${image}:latest"
-          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            tags="${tags},${image}:$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          fi
           {
             echo "PUSH=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
             echo "IMAGE=${image}"
