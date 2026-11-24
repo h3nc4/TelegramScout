@@ -70,7 +70,7 @@ FROM golangci/golangci-lint:v2.15@sha256:fbfcfd12a6f8d7f1b97b3362ca80fc2a244d468
 
 ################################################################################
 # Debian main stage
-FROM h3nc4/dev-base:debian-13@sha256:80a26b3967537848ad1331b5b61b4a60ea2f918968a65918f1d86e7ed021900a AS main
+FROM h3nc4/dev-base:debian-13@sha256:b8127ead8cc092379e220f5ca5b9dae47bffbf1bb35cb77ce26c3d9386e493cd AS main
 
 # dev-base ends as the dev user, and the steps below need root.
 USER root
